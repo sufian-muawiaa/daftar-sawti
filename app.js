@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-settings: { darkMode:false, quickMode:true, continuous:false, shopName:'', pin:'' }
+    settings: { darkMode:false, quickMode:true, continuous:false, shopName:'', pin:'' }
   };
 }
 
@@ -734,7 +734,11 @@ function handleRecognizedText(text){
     const matches = findCustomersByName(parsed.name);
     if(matches.length === 1){ closeRecordModal(); navigate('customer', {id:matches[0].id}); return; }
     if(matches.length > 1){ showAmbiguous(matches, ()=>{}); return; }
-    showNotFound(parsed.name);
+    // زبون جديد تمامًا: أنشئ له صفحة تلقائيًا دون سؤال
+    const newId = createCustomer({name: (parsed.name||'').trim() || 'زبون جديد'});
+    toast('✓ تم إنشاء صفحة جديدة: ' + DB.customers[newId].name);
+    closeRecordModal();
+    navigate('customer', {id:newId});
     return;
   }
 
@@ -755,8 +759,9 @@ function handleRecognizedText(text){
       showAmbiguous(matches, (chosen)=> showParseResult(parsed, chosen));
       return;
     } else {
-      showNotFound(parsed.name, parsed);
-      return;
+      // زبون جديد تمامًا: أنشئ له صفحة تلقائيًا دون سؤال، ثم كمّل تسجيل العملية عليه فورًا
+      const newId = createCustomer({name: (parsed.name||'').trim() || 'زبون جديد'});
+      customer = DB.customers[newId];
     }
   }
   showParseResult(parsed, customer);
@@ -788,25 +793,7 @@ function showAmbiguous(matches, onChoose){
   });
 }
 
-let pendingNewCustomerParsed = null;
-function showNotFound(name, parsedTx){
-  pendingNewCustomerParsed = parsedTx || null;
-  $('#notFoundBox').hidden = false;
-  $('#parseResult').hidden = true;
-  $('#ambiguousBox').hidden = true;
-  $('#notFoundText').textContent = `«${name}» غير موجود في دفتر الزبائن.`;
-  $('#btnCreateFromVoice').onclick = ()=>{
-    const id = createCustomer({name: name.trim() || 'زبون جديد'});
-    $('#notFoundBox').hidden = true;
-    if(pendingNewCustomerParsed){
-      showParseResult(pendingNewCustomerParsed, DB.customers[id]);
-    } else {
-      closeRecordModal();
-      navigate('customer', {id});
-    }
-  };
-}
-$('#btnCancelNotFound').addEventListener('click', ()=>{ $('#notFoundBox').hidden = true; closeRecordModal(); });
+let pendingNewCustomerParsed = null; // محفوظة لأغراض توافقية، لم تعد تُستخدم فعلياً
 
 let activeParseCtx = null;
 function showParseResult(parsed, customer){
@@ -864,6 +851,8 @@ function confirmParsedTransaction(){
     note: (parsed.items && parsed.items.length) ? '' : ''
   });
 
+  const newBal = customerBalance(customer.id); // بعد الحفظ الآن (addTransaction تم فوق)
+
   if(DB.settings.continuous){
     logQuick(customer.name, parsed.type, parsed.amount);
     $('#parseResult').hidden = true;
@@ -873,7 +862,8 @@ function confirmParsedTransaction(){
       try{ recognition.start(); $('#btnRecord').classList.add('listening'); }catch(e){}
     }
   } else {
-    toast('✓ تم حفظ العملية');
+    const sign = parsed.type === 'add' ? '+' : '−';
+    toast(`✓ ${customer.name} ${sign}${fmt(parsed.amount)} — الرصيد الجديد: ${fmt(newBal)}`, 3500);
     closeRecordModal();
     if(App.currentView === 'customer') renderCustomerPage(App.activeCustomerId);
     if(App.currentView === 'home') renderHome();
