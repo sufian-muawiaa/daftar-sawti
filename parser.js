@@ -17,6 +17,14 @@
   /* ============ تطبيع النص العربي ============ */
   const AR_DIGITS = {'٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'};
 
+  // بعض متصفحات/محركات التعرف الصوتي تكتب الأرقام المنطوقة بصيغة مجمّعة
+  // مثل "50,000" أو "50.000" بدل "50000" (حسب لغة نظام التشغيل). لازم نلتقط
+  // هذي الحالة ونحوّلها لرقم صريح *قبل* أي معالجة أخرى، وإلا فاصلة الآلاف
+  // ستُفهم بالغلط كفاصلة تفصل بين أصناف متعددة (ميزة أخرى بالتطبيق).
+  function collapseGroupedNumbers(text){
+    return String(text).replace(/\d{1,3}(?:[.,]\d{3})+\b/g, m => m.replace(/[.,]/g, ''));
+  }
+
   function normalizeArabic(s){
     return String(s)
       .replace(/[٠-٩]/g, d => AR_DIGITS[d])
@@ -81,7 +89,7 @@
   }
 
   function wordsToNumber(phrase){
-    let text = normalizeArabic(phrase);
+    let text = normalizeArabic(collapseGroupedNumbers(phrase));
     // دمج صيغ العشرات المركبة (أحد عشر...الخ) إلى رمز واحد قبل التقسيم
     Object.keys(TEENS).forEach(k=>{
       if(k.includes(' ')) text = text.replace(new RegExp(k,'g'), k.replace(/ /g,'_'));
@@ -129,7 +137,7 @@
   }
 
   function parseCommand(rawText){
-    const norm = normalizeArabic(rawText);
+    const norm = normalizeArabic(collapseGroupedNumbers(rawText));
     const cleaned = stripNoise(norm);
     const tokens = cleaned.split(/\s+/).filter(Boolean);
 
