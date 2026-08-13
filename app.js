@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-    settings: { darkMode:false, quickMode:false, continuous:false, shopName:'', pin:'' }
+    settings: { darkMode:falsequickMode:true, continuous:false, shopName:'', pin:'' }
   };
 }
 
