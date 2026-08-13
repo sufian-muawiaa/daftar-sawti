@@ -59,6 +59,9 @@
   // يحاول مطابقة رمز واحد ضمن حالة التراكم الحالية؛ يُرجع true إذا تم التعرف عليه
   function tryMatchNumToken(tok, state){
     if(/^\d+$/.test(tok)){ state.current += parseInt(tok,10); return true; }
+    // بعض المتصفحات (حسب لغة نظام التشغيل، مثل التركية) تكتب الأرقام المنطوقة
+    // بصيغة "50.000" (نقطة كفاصل آلاف) بدل "50000" — نتعامل معها هنا
+    if(/^\d{1,3}(\.\d{3})+$/.test(tok)){ state.current += parseInt(tok.replace(/\./g,''),10); return true; }
     if(tok === NISF){ if(state.lastScale){ state.total += state.lastScale/2; } return true; }
     if(TEENS[tok] !== undefined){ state.current += TEENS[tok]; return true; }
     if(SPECIAL[tok] !== undefined){ state.total += SPECIAL[tok]; return true; }
