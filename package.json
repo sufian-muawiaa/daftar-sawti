@@ -1,0 +1,12 @@
+{
+  "name": "daftar-al-dyoon-al-sawti",
+  "version": "1.0.0",
+  "description": "دفتر ديون صوتي يعمل بدون إنترنت لأصحاب المحلات والبائعين",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx --yes serve . -l 5173",
+    "test": "node tests/parser.test.js"
+  },
+  "keywords": ["arabic", "voice", "pwa", "offline", "ledger", "دفتر", "ديون"]
+}

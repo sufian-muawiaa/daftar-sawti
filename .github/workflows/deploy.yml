@@ -1,0 +1,43 @@
+name: اختبار ونشر دفتر الديون الصوتي
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: تشغيل اختبارات محرك التحليل
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: تشغيل حزمة الاختبارات
+        run: node tests/parser.test.js
+
+  deploy:
+    name: نشر على GitHub Pages
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: تجهيز Pages
+        uses: actions/configure-pages@v4
+      - name: رفع الملفات كمصدر للنشر
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: النشر
+        id: deployment
+        uses: actions/deploy-pages@v4

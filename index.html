@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#20342E">
+<meta name="google" content="notranslate">
+<title>دفتر الديون الصوتي</title>
+<meta name="description" content="دفتر ديون صوتي يعمل بدون إنترنت لأصحاب المحلات">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body translate="no" class="notranslate">
+
+<!-- طبقة نسيج الورق -->
+<div class="paper-grain" aria-hidden="true"></div>
+
+<div id="app">
+
+  <!-- ===== الشريط العلوي ===== -->
+  <header class="topbar">
+    <button class="icon-btn" id="btnMenu" aria-label="القائمة" data-nav="home">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+    <div class="brand">
+      <h1>دفتر الديون <span>الصوتي</span></h1>
+      <p class="tagline">قلها... ونحن نحسبها</p>
+    </div>
+    <button class="icon-btn ghost" id="btnInstallApp" aria-label="تثبيت التطبيق" hidden>
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+    </button>
+    <button class="icon-btn" id="btnAlerts" aria-label="التذكيرات" data-nav="reminders">
+      <svg viewBox="0 0 24 24"><path d="M12 2a6 6 0 0 0-6 6v3.6c0 .5-.2 1-.5 1.4L4 15h16l-1.5-2c-.3-.4-.5-.9-.5-1.4V8a6 6 0 0 0-6-6z"/><path d="M9.5 18a2.5 2.5 0 0 0 5 0"/></svg>
+      <span class="badge" id="alertBadge" hidden>0</span>
+    </button>
+  </header>
+
+  <div class="voice-warning" id="voiceWarning" hidden>
+    ⚠️ فتحت الصفحة مباشرة من ملف على جهازك، فلن يعمل التسجيل الصوتي (يحتاج رابط https مثل رابط Netlify).
+    باقي التطبيق يعمل بشكل طبيعي، ويمكنك استخدام زر «اكتب الأمر» بدل التسجيل.
+  </div>
+
+  <main id="views">
+
+    <!-- ===== الرئيسية ===== -->
+    <section class="view" id="view-home" data-view>
+      <div class="ledger-stitch"></div>
+
+      <div class="stamp-wrap">
+        <button id="btnRecord" class="stamp-btn" aria-label="تسجيل عملية صوتية">
+          <span class="ring"></span>
+          <span class="ripple r1"></span>
+          <span class="ripple r2"></span>
+          <span class="stamp-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+          </span>
+          <span class="stamp-label">سجّل عملية</span>
+        </button>
+        <button id="btnTypeInstead" class="link-btn">أو اكتب الأمر بدل التسجيل</button>
+      </div>
+
+      <div class="quick-stat">
+        <span class="qs-label">إجمالي الديون المستحقة</span>
+        <span class="qs-value" id="homeTotalDebt">0 ل.س</span>
+      </div>
+
+      <div class="tile-grid">
+        <button class="tile" data-nav="customers">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>الزبائن</span>
+        </button>
+        <button class="tile" data-nav="addCustomer">
+          <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+          <span>إضافة زبون</span>
+        </button>
+        <button class="tile" data-nav="stats">
+          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+          <span>الإحصائيات</span>
+        </button>
+        <button class="tile" data-nav="backup">
+          <svg viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg>
+          <span>النسخ الاحتياطي</span>
+        </button>
+        <button class="tile" data-nav="trash">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+          <span>سجل المحذوفات</span>
+        </button>
+        <button class="tile" data-nav="settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>الإعدادات</span>
+        </button>
+      </div>
+
+      <div class="recent-strip" id="recentStrip">
+        <h3 class="section-label">آخر العمليات</h3>
+        <div id="recentList" class="recent-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== قائمة الزبائن ===== -->
+    <section class="view" id="view-customers" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">صفحات الزبائن</h2>
+      <div class="search-row">
+        <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="customerSearch" placeholder="ابحث باسم الزبون...">
+      </div>
+      <div class="sort-row">
+        <label for="sortSelect">ترتيب حسب</label>
+        <select id="sortSelect">
+          <option value="name">الاسم</option>
+          <option value="debtDesc">أعلى دين</option>
+          <option value="debtAsc">أقل دين</option>
+          <option value="recent">آخر عملية</option>
+        </select>
+      </div>
+      <div id="customerList" class="customer-list"></div>
+      <p class="empty-state" id="customersEmpty" hidden>لا يوجد زبائن بعد. اضغط «إضافة زبون» لبدء الدفتر.</p>
+    </section>
+
+    <!-- ===== صفحة زبون ===== -->
+    <section class="view" id="view-customer" data-view hidden>
+      <button class="back-link" data-nav="customers">‹ الزبائن</button>
+      <div class="customer-head">
+        <div class="customer-avatar" id="custAvatar">م</div>
+        <div>
+          <h2 id="custName" class="view-title">—</h2>
+          <p id="custMeta" class="muted-line"></p>
+        </div>
+        <button class="icon-btn ghost" id="btnEditCustomer" aria-label="تعديل بيانات الزبون">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </button>
+      </div>
+
+      <div class="balance-card" id="balanceCard">
+        <span class="balance-label">إجمالي الدين الحالي</span>
+        <span class="balance-value" id="custBalance">0</span>
+        <span class="balance-unit">ل.س</span>
+      </div>
+
+      <div class="action-row">
+        <button class="pill-btn add" id="btnQuickAdd">➕ إضافة دين</button>
+        <button class="pill-btn pay" id="btnQuickPay">💵 تسجيل دفعة</button>
+        <button class="pill-btn voice" id="btnCustVoice">🎙️ صوتي</button>
+      </div>
+
+      <div class="action-row secondary">
+        <button class="text-btn" id="btnCustNote">🎙️ ملاحظة صوتية</button>
+        <button class="text-btn" id="btnCustPhoto">📷 صورة</button>
+        <button class="text-btn" id="btnCustInvoice">🧾 فاتورة</button>
+        <button class="text-btn" id="btnCustShare">📤 مشاركة</button>
+        <button class="text-btn" id="btnCustPrint">🖨️ طباعة / PDF</button>
+      </div>
+
+      <h3 class="section-label">سجل الحركات</h3>
+      <div id="txTable" class="tx-table"></div>
+      <p class="empty-state" id="txEmpty" hidden>لا توجد عمليات مسجلة على هذه الصفحة بعد.</p>
+    </section>
+
+    <!-- ===== إضافة زبون ===== -->
+    <section class="view" id="view-addCustomer" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">إضافة زبون جديد</h2>
+      <form id="formAddCustomer" class="form-grid">
+        <label>الاسم الكامل<span class="req">*</span>
+          <input type="text" id="fName" required placeholder="محمد أحمد">
+        </label>
+        <label>أسماء صوتية بديلة (اختياري)
+          <input type="text" id="fAltNames" placeholder="أبو محمد، أبو أحمد — افصل بفاصلة">
+        </label>
+        <label>اسم الأب
+          <input type="text" id="fFather">
+        </label>
+        <label>الكنية
+          <input type="text" id="fNickname">
+        </label>
+        <label>رقم الهاتف
+          <input type="tel" id="fPhone" placeholder="09xxxxxxxx">
+        </label>
+        <label>العنوان
+          <input type="text" id="fAddress">
+        </label>
+        <label>الرصيد الافتتاحي (الدين الحالي إن وجد)
+          <input type="text" inputmode="numeric" id="fOpening" placeholder="0">
+        </label>
+        <label>ملاحظات
+          <textarea id="fNotes" rows="2"></textarea>
+        </label>
+        <button type="submit" class="primary-btn">💾 حفظ الزبون</button>
+      </form>
+    </section>
+
+    <!-- ===== الإحصائيات ===== -->
+    <section class="view" id="view-stats" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">لوحة الإحصائيات</h2>
+      <div class="stat-grid" id="statGrid"></div>
+      <h3 class="section-label">أكبر 10 ديون</h3>
+      <div id="topDebtsList" class="customer-list"></div>
+    </section>
+
+    <!-- ===== النسخ الاحتياطي ===== -->
+    <section class="view" id="view-backup" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">النسخ الاحتياطي والاستعادة</h2>
+      <p class="muted-line">يحفظ الدفتر بأكمله (الزبائن، العمليات، الإعدادات) في ملف واحد يمكن نقله بين الأجهزة.</p>
+      <button class="primary-btn" id="btnExportBackup">💾 إنشاء نسخة احتياطية (تنزيل ملف)</button>
+      <label class="file-btn">
+        📂 استعادة من نسخة احتياطية
+        <input type="file" id="importBackupFile" accept="application/json" hidden>
+      </label>
+      <p class="hint">سيتم استبدال كامل بيانات الدفتر الحالية بالنسخة المستعادة.</p>
+    </section>
+
+    <!-- ===== سجل المحذوفات ===== -->
+    <section class="view" id="view-trash" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">سجل العمليات المحذوفة</h2>
+      <div id="trashList" class="tx-table"></div>
+      <p class="empty-state" id="trashEmpty" hidden>لا توجد عناصر محذوفة.</p>
+    </section>
+
+    <!-- ===== التذكيرات ===== -->
+    <section class="view" id="view-reminders" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">تذكيرات مواعيد السداد</h2>
+      <div id="remindersList" class="tx-table"></div>
+      <p class="empty-state" id="remindersEmpty" hidden>لا توجد تذكيرات مضافة. أضف موعد سداد من صفحة الزبون.</p>
+    </section>
+
+    <!-- ===== الإعدادات ===== -->
+    <section class="view" id="view-settings" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">الإعدادات</h2>
+      <div class="settings-list">
+        <label class="switch-row">
+          <span>الوضع الليلي</span>
+          <input type="checkbox" id="setDark">
+        </label>
+        <label class="switch-row">
+          <span>التنفيذ السريع (حفظ العملية الصوتية دون تأكيد)</span>
+          <input type="checkbox" id="setQuick">
+        </label>
+        <label class="switch-row">
+          <span>الوضع السريع المستمر (تسجيل زبون تلو الآخر)</span>
+          <input type="checkbox" id="setContinuous">
+        </label>
+        <label class="field-row">
+          <span>اسم المحل (يظهر في الفاتورة والمشاركة)</span>
+          <input type="text" id="setShopName" placeholder="محل أبو خالد">
+        </label>
+        <label class="field-row">
+          <span>قفل برقم سري (اختياري)</span>
+          <input type="password" id="setPin" placeholder="اتركه فارغاً لإلغاء القفل" inputmode="numeric" maxlength="6">
+        </label>
+      </div>
+      <p class="hint">كل البيانات تُحفظ محلياً على جهازك فقط ولا تحتاج إنترنت.</p>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===== نافذة التسجيل الصوتي / تأكيد العملية ===== -->
+<div class="modal-overlay" id="recordModal" hidden role="dialog" aria-modal="true" aria-labelledby="recordStateLabel">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="recordStateLabel" aria-live="polite">🔴 جاري الاستماع...</span>
+      <button class="icon-btn ghost" id="btnCloseModal" aria-label="إغلاق">✕</button>
+    </div>
+
+    <div class="mic-visual" id="micVisual" aria-hidden="true">
+      <div class="wave"></div>
+      <div class="wave"></div>
+      <div class="wave"></div>
+    </div>
+
+    <p class="heard-text" id="heardText" aria-live="polite">قل شيئاً مثل: «محمد إضافة خمسين ألف»</p>
+
+    <div id="typeFallback" class="type-fallback" hidden>
+      <input type="text" id="typeInput" placeholder="مثال: محمد إضافة خمسين ألف">
+      <button class="primary-btn small" id="btnParseTyped">تحليل</button>
+    </div>
+
+    <div id="parseResult" class="parse-result" hidden>
+      <div class="pr-row"><span>الاسم</span><b id="prName">—</b></div>
+      <div class="pr-row"><span>العملية</span><b id="prAction">—</b></div>
+      <div class="pr-row"><span>المبلغ</span><b id="prAmount">—</b></div>
+      <div class="pr-row" id="prItemsRow" hidden><span>الأصناف</span><b id="prItems">—</b></div>
+      <div class="pr-row balance-row"><span>الرصيد السابق</span><b id="prPrev">0</b></div>
+      <div class="pr-row balance-row highlight"><span>الرصيد الجديد</span><b id="prNew">0</b></div>
+
+      <div class="pr-edit" id="prEditWrap" hidden>
+        <label>الاسم <select id="editName"></select></label>
+        <label>العملية
+          <select id="editAction">
+            <option value="add">إضافة (دين)</option>
+            <option value="subtract">طرح (دفعة)</option>
+          </select>
+        </label>
+        <label>المبلغ <input type="text" inputmode="numeric" id="editAmount"></label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="pill-btn ghost" id="btnEditParsed">✏️ تعديل</button>
+        <button class="pill-btn confirm" id="btnConfirmParsed">✅ تأكيد</button>
+      </div>
+      <button class="link-btn danger" id="btnCancelParsed">❌ إلغاء</button>
+    </div>
+
+    <div id="ambiguousBox" class="ambiguous-box" hidden>
+      <p>وجدت أكثر من زبون بهذا الاسم، اختر المقصود:</p>
+      <div id="ambiguousList" class="ambiguous-list"></div>
+    </div>
+
+    <div id="notFoundBox" class="not-found-box" hidden>
+      <p id="notFoundText">هذا الزبون غير موجود في دفتر الزبائن.</p>
+      <div class="modal-actions">
+        <button class="pill-btn confirm" id="btnCreateFromVoice">➕ إنشاء الصفحة</button>
+        <button class="pill-btn ghost" id="btnCancelNotFound">إلغاء</button>
+      </div>
+    </div>
+
+    <div id="quickModeLog" class="quick-log" hidden></div>
+  </div>
+</div>
+
+<!-- ===== توست صغير ===== -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ===== منطقة الطباعة (كشف الحساب) ===== -->
+<div id="printArea" class="print-area" hidden></div>
+
+<script src="parser.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
