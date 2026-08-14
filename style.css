@@ -82,6 +82,7 @@ a{color:inherit;}
 }
 .icon-btn svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round;}
 .icon-btn.ghost{background:transparent; box-shadow:none; border:1.5px solid var(--thread);}
+.icon-btn.ghost.danger{color:var(--rust); border-color:var(--rust);}
 .badge{
   position:absolute; top:-2px; left:-2px; background:var(--rust); color:#fff;
   font-size:10px; min-width:16px; height:16px; border-radius:8px;

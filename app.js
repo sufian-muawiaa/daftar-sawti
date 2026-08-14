@@ -349,6 +349,28 @@ $('#btnEditCustomer').addEventListener('click', ()=>{
   renderCustomerPage(c.id);
 });
 
+$('#btnDeleteCustomer').addEventListener('click', ()=>{
+  const c = DB.customers[App.activeCustomerId];
+  if(!c) return;
+  const bal = customerBalance(c.id);
+  const balWarning = bal !== 0
+    ? `\n\n⚠️ تنبيه: رصيد "${c.name}" الحالي هو ${fmt(bal)} ل.س — سيُحذف نهائياً مع كامل سجل عملياته ولن تقدر تسترجعه.`
+    : '';
+  const ok = confirm(`هل أنت متأكد من حذف صفحة "${c.name}" نهائياً من الدفتر؟${balWarning}`);
+  if(!ok) return;
+  deleteCustomerCompletely(c.id);
+  toast('تم حذف صفحة ' + c.name + ' نهائياً');
+  navigate('customers');
+});
+
+function deleteCustomerCompletely(customerId){
+  delete DB.customers[customerId];
+  Object.keys(DB.transactions).forEach(txId=>{
+    if(DB.transactions[txId].customerId === customerId) delete DB.transactions[txId];
+  });
+  save();
+}
+
 function printCustomerStatement(customerId, title){
   const c = DB.customers[customerId];
   const shopName = DB.settings.shopName || 'دفتر الديون الصوتي';
@@ -563,6 +585,8 @@ let listenWatchdog = null;
 let silenceDebounce = null;      // مؤقت "انتهى الكلام" بعد فترة صمت كافية
 let recognitionActiveText = '';  // آخر نص متراكم أثناء الجلسة الحالية
 let recognitionProcessed = false; // لمنع معالجة نفس النص مرتين
+let recognitionRunning = false;   // هل جلسة التعرف الصوتي شغّالة فعلياً الآن؟
+let pendingRestart = false;       // طلب إعادة استماع مؤجّل حتى تنتهي الجلسة الحالية فعلياً
 
 // المدة الزمنية (بالمللي ثانية) اللي لازم تمر فيها صمت بعد آخر كلمة قبل ما نعتبر
 // إن البائع خلّص كلامه. رقم أكبر = مهلة أطول ومجال أوسع للتوقف الطبيعي بين الكلمات
@@ -589,6 +613,9 @@ function setupSpeechRecognition(){
   recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
+  recognition.onstart = ()=>{
+    recognitionRunning = true;
+  };
   recognition.onresult = (ev)=>{
     clearListenWatchdog();
     let text = '';
@@ -620,14 +647,49 @@ function setupSpeechRecognition(){
     }
   };
   recognition.onend = ()=>{
+    recognitionRunning = false;
     clearListenWatchdog();
     stopListeningVisual();
     // شبكة أمان: لو انتهت الجلسة (مثلاً المتصفح أوقفها من نفسه) قبل ما يطلق
     // مؤقت الصمت الخاص فينا، نعالج آخر نص وصلنا إن وُجد بدل ما يضيع الكلام بصمت
     finalizeRecognitionIfAny();
+    // لو كان فيه طلب معلَّق لإعادة الاستماع (بعد حفظ عملية)، ننفّذه الآن بعد
+    // ما تأكدنا فعلياً إن الجلسة القديمة انتهت بالكامل — هذا يمنع خطأ التسابق
+    // "recognition has already started" اللي كان يوقف الاستماع التلقائي بصمت
+    if(pendingRestart){
+      pendingRestart = false;
+      startListeningSession();
+    }
   };
 }
 setupSpeechRecognition();
+
+// نقطة البدء الموحّدة والآمنة للاستماع: تُستخدم من كل مكان بدل استدعاء
+// recognition.start() مباشرة، لتفادي أخطاء التسابق عند بدء جلسة قبل انتهاء سابقتها فعلياً
+function startListeningSession(){
+  if(!recognitionSupported || !isSecureContextForVoice()){ showTypeFallback(); return; }
+  if(recognitionRunning){
+    // جلسة سابقة لسا شغّالة فعلياً: نطلب إيقافها ثم الانتظار لحدث onend لبدء جلسة جديدة هناك
+    pendingRestart = true;
+    try{ recognition.stop(); }catch(e){}
+    return;
+  }
+  try{
+    recognition.start();
+    $('#btnRecord').classList.add('listening');
+    $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
+    clearListenWatchdog();
+    listenWatchdog = setTimeout(()=>{
+      try{ recognition.stop(); }catch(e){}
+      stopListeningVisual();
+      $('#recordStateLabel').textContent = '⏱️ لم يصل رد من الميكروفون';
+      $('#heardText').textContent = 'لم يستجب التعرف الصوتي. تأكد من السماح للميكروفون، أو استخدم الكتابة، أو أغلق النافذة إن انتهيت.';
+      showTypeFallback();
+    }, 12000);
+  }catch(e){
+    showTypeFallback();
+  }
+}
 
 function clearListenWatchdog(){
   if(listenWatchdog){ clearTimeout(listenWatchdog); listenWatchdog = null; }
@@ -653,6 +715,7 @@ function openRecordModal(opts={}){
   pendingAmbiguous = null;
   recognitionActiveText = '';
   recognitionProcessed = false;
+  pendingRestart = false;
   clearSilenceDebounce();
   App.recordOpts = opts;
   App.lastFocusedBeforeModal = document.activeElement;
@@ -676,25 +739,7 @@ function openRecordModal(opts={}){
     return;
   }
 
-  if(recognitionSupported){
-    try{
-      recognition.start();
-      $('#btnRecord').classList.add('listening');
-      // مهلة أمان: إن لم يصل أي صوت إطلاقاً خلال 12 ثانية (لا onresult ولا onerror)
-      // نوقف الاستماع يدوياً ونعرض بديل الكتابة حتى لا تبقى الواجهة عالقة أبداً.
-      // (هذي مختلفة عن مؤقت الصمت SILENCE_MS اللي يعمل فقط بعد ما يبدأ البائع الكلام)
-      clearListenWatchdog();
-      listenWatchdog = setTimeout(()=>{
-        try{ recognition.stop(); }catch(e){}
-        stopListeningVisual();
-        $('#recordStateLabel').textContent = '⏱️ لم يصل رد من الميكروفون';
-        $('#heardText').textContent = 'لم يستجب التعرف الصوتي. تأكد من السماح للميكروفون، أو استخدم الكتابة:';
-        showTypeFallback();
-      }, 12000);
-    }catch(e){ showTypeFallback(); }
-  } else {
-    showTypeFallback();
-  }
+  startListeningSession();
 }
 
 function showTypeFallback(){
@@ -710,6 +755,7 @@ function closeRecordModal(){
   clearListenWatchdog();
   clearSilenceDebounce();
   recognitionProcessed = true; // يمنع أي معالجة متأخرة بعد الإغلاق
+  pendingRestart = false; // يمنع إعادة فتح الاستماع تلقائياً بعد إغلاق صريح من المستخدم
   // إغلاق مضمون دائماً حتى لو كان هناك خطأ في كائن التعرف الصوتي
   try{ if(recognition) recognition.abort ? recognition.abort() : recognition.stop(); }catch(e){}
   stopListeningVisual();
@@ -910,22 +956,7 @@ function confirmParsedTransaction(){
   recognitionActiveText = '';
   recognitionProcessed = false;
 
-  if(recognitionSupported && isSecureContextForVoice()){
-    try{
-      recognition.start();
-      $('#btnRecord').classList.add('listening');
-      clearListenWatchdog();
-      listenWatchdog = setTimeout(()=>{
-        try{ recognition.stop(); }catch(e){}
-        stopListeningVisual();
-        $('#recordStateLabel').textContent = '⏱️ لم يصل رد من الميكروفون';
-        $('#heardText').textContent = 'لم يستجب التعرف الصوتي. تأكد من السماح للميكروفون، أو استخدم الكتابة، أو أغلق النافذة إن انتهيت.';
-        showTypeFallback();
-      }, 12000);
-    }catch(e){ showTypeFallback(); }
-  } else {
-    showTypeFallback();
-  }
+  startListeningSession();
 }
 
 function logQuick(name, type, amount){
