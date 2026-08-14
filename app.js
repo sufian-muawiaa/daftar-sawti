@@ -560,6 +560,14 @@ let recognitionSupported = false;
 let currentParsed = null;
 let pendingAmbiguous = null;
 let listenWatchdog = null;
+let silenceDebounce = null;      // مؤقت "انتهى الكلام" بعد فترة صمت كافية
+let recognitionActiveText = '';  // آخر نص متراكم أثناء الجلسة الحالية
+let recognitionProcessed = false; // لمنع معالجة نفس النص مرتين
+
+// المدة الزمنية (بالمللي ثانية) اللي لازم تمر فيها صمت بعد آخر كلمة قبل ما نعتبر
+// إن البائع خلّص كلامه. رقم أكبر = مهلة أطول ومجال أوسع للتوقف الطبيعي بين الكلمات
+// دون قطع التسجيل، لكن استجابة أبطأ شوي بعد انتهاء الكلام الفعلي.
+const SILENCE_MS = 1800;
 
 // التعرف الصوتي في المتصفح يعمل فقط ضمن "سياق آمن": HTTPS أو http://localhost.
 // فتح الملف مباشرة (file:///...) أو رابط http عادي على شبكة محلية يمنعه المتصفح بصمت.
@@ -576,20 +584,26 @@ function setupSpeechRecognition(){
   recognition = new SR();
   recognition.lang = 'ar-SA';
   recognition.interimResults = true;
-  recognition.continuous = false;
+  // نُبقي الاستماع مستمراً دائماً (بدل الاعتماد على "isFinal" اللي يقطع الكلام
+  // عند أول توقف قصير بين الكلمات) ونتحكم نحن بلحظة الانتهاء عبر مؤقت صمت خاص بنا
+  recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
   recognition.onresult = (ev)=>{
     clearListenWatchdog();
     let text = '';
     for(let i=0; i<ev.results.length; i++) text += ev.results[i][0].transcript;
+    recognitionActiveText = text;
     $('#heardText').textContent = '«' + text + '»';
-    if(ev.results[ev.results.length-1].isFinal){
-      handleRecognizedText(text);
-    }
+    // كل ما وصل كلام جديد (حتى لو غير نهائي بعد) نعيد ضبط مؤقت الصمت من الصفر —
+    // لا نعالج النص إلا بعد فترة SILENCE_MS من الهدوء الفعلي، فيصير للبائع وقت
+    // كافٍ يكمل جملته دون ما يُقطع تسجيله عند أول وقفة قصيرة
+    if(silenceDebounce) clearTimeout(silenceDebounce);
+    silenceDebounce = setTimeout(finalizeRecognitionIfAny, SILENCE_MS);
   };
   recognition.onerror = (ev)=>{
     clearListenWatchdog();
+    clearSilenceDebounce();
     stopListeningVisual();
     if(ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
       $('#recordStateLabel').textContent = '⚠️ لم يُسمح باستخدام الميكروفون';
@@ -608,6 +622,9 @@ function setupSpeechRecognition(){
   recognition.onend = ()=>{
     clearListenWatchdog();
     stopListeningVisual();
+    // شبكة أمان: لو انتهت الجلسة (مثلاً المتصفح أوقفها من نفسه) قبل ما يطلق
+    // مؤقت الصمت الخاص فينا، نعالج آخر نص وصلنا إن وُجد بدل ما يضيع الكلام بصمت
+    finalizeRecognitionIfAny();
   };
 }
 setupSpeechRecognition();
@@ -616,9 +633,27 @@ function clearListenWatchdog(){
   if(listenWatchdog){ clearTimeout(listenWatchdog); listenWatchdog = null; }
 }
 
+function clearSilenceDebounce(){
+  if(silenceDebounce){ clearTimeout(silenceDebounce); silenceDebounce = null; }
+}
+
+// يعالج آخر نص متراكم بعد التأكد من انتهاء الكلام فعلياً (فترة صمت كافية أو انتهاء الجلسة)
+function finalizeRecognitionIfAny(){
+  clearSilenceDebounce();
+  if(recognitionProcessed) return;
+  const text = (recognitionActiveText || '').trim();
+  if(!text) return;
+  recognitionProcessed = true;
+  try{ recognition.stop(); }catch(e){}
+  handleRecognizedText(text);
+}
+
 function openRecordModal(opts={}){
   currentParsed = null;
   pendingAmbiguous = null;
+  recognitionActiveText = '';
+  recognitionProcessed = false;
+  clearSilenceDebounce();
   App.recordOpts = opts;
   App.lastFocusedBeforeModal = document.activeElement;
   $('#recordModal').hidden = false;
@@ -628,8 +663,8 @@ function openRecordModal(opts={}){
   $('#parseResult').hidden = true;
   $('#ambiguousBox').hidden = true;
   $('#notFoundBox').hidden = true;
-  $('#quickModeLog').hidden = !DB.settings.continuous;
-  if(DB.settings.continuous) $('#quickModeLog').innerHTML = '';
+  $('#quickModeLog').hidden = false;
+  $('#quickModeLog').innerHTML = '';
   $('#typeFallback').hidden = true;
   $('#btnCloseModal').focus();
 
@@ -643,11 +678,11 @@ function openRecordModal(opts={}){
 
   if(recognitionSupported){
     try{
-      recognition.continuous = !!DB.settings.continuous;
       recognition.start();
       $('#btnRecord').classList.add('listening');
-      // مهلة أمان: إن لم يصل أي رد فعل خلال 9 ثوانٍ (لا onresult ولا onerror ولا onend)
-      // نوقف الاستماع يدوياً ونعرض بديل الكتابة حتى لا تبقى الواجهة عالقة أبداً
+      // مهلة أمان: إن لم يصل أي صوت إطلاقاً خلال 12 ثانية (لا onresult ولا onerror)
+      // نوقف الاستماع يدوياً ونعرض بديل الكتابة حتى لا تبقى الواجهة عالقة أبداً.
+      // (هذي مختلفة عن مؤقت الصمت SILENCE_MS اللي يعمل فقط بعد ما يبدأ البائع الكلام)
       clearListenWatchdog();
       listenWatchdog = setTimeout(()=>{
         try{ recognition.stop(); }catch(e){}
@@ -655,7 +690,7 @@ function openRecordModal(opts={}){
         $('#recordStateLabel').textContent = '⏱️ لم يصل رد من الميكروفون';
         $('#heardText').textContent = 'لم يستجب التعرف الصوتي. تأكد من السماح للميكروفون، أو استخدم الكتابة:';
         showTypeFallback();
-      }, 9000);
+      }, 12000);
     }catch(e){ showTypeFallback(); }
   } else {
     showTypeFallback();
@@ -673,6 +708,8 @@ function stopListeningVisual(){
 
 function closeRecordModal(){
   clearListenWatchdog();
+  clearSilenceDebounce();
+  recognitionProcessed = true; // يمنع أي معالجة متأخرة بعد الإغلاق
   // إغلاق مضمون دائماً حتى لو كان هناك خطأ في كائن التعرف الصوتي
   try{ if(recognition) recognition.abort ? recognition.abort() : recognition.stop(); }catch(e){}
   stopListeningVisual();
@@ -852,21 +889,42 @@ function confirmParsedTransaction(){
   });
 
   const newBal = customerBalance(customer.id); // بعد الحفظ الآن (addTransaction تم فوق)
+  const sign = parsed.type === 'add' ? '+' : '−';
 
-  if(DB.settings.continuous){
-    logQuick(customer.name, parsed.type, parsed.amount);
-    $('#parseResult').hidden = true;
-    $('#heardText').textContent = 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
-    currentParsed = null;
-    if(recognitionSupported){
-      try{ recognition.start(); $('#btnRecord').classList.add('listening'); }catch(e){}
-    }
+  // تحديث أي شاشة خلفية مفتوحة فوراً (صفحة الزبون أو الرئيسية) حتى لو النافذة
+  // الصوتية باقية مفتوحة فوق الشاشة
+  if(App.currentView === 'customer') renderCustomerPage(App.activeCustomerId);
+  if(App.currentView === 'home') renderHome();
+
+  // السلوك الافتراضي دائماً: نبقي النافذة مفتوحة ونعيد الاستماع تلقائياً للعملية
+  // التالية، بدل إغلاقها بعد كل عملية — البائع يكمل تسجيل زبون بعد زبون
+  // بصوته فقط دون أي ضغط زر إضافي، ويقفل النافذة يدوياً هو لما يخلص فعلاً.
+  logQuick(customer.name, parsed.type, parsed.amount);
+  toast(`✓ ${customer.name} ${sign}${fmt(parsed.amount)} — الرصيد الجديد: ${fmt(newBal)}`, 3000);
+
+  $('#parseResult').hidden = true;
+  $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
+  $('#heardText').textContent = 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
+  currentParsed = null;
+  activeParseCtx = null;
+  recognitionActiveText = '';
+  recognitionProcessed = false;
+
+  if(recognitionSupported && isSecureContextForVoice()){
+    try{
+      recognition.start();
+      $('#btnRecord').classList.add('listening');
+      clearListenWatchdog();
+      listenWatchdog = setTimeout(()=>{
+        try{ recognition.stop(); }catch(e){}
+        stopListeningVisual();
+        $('#recordStateLabel').textContent = '⏱️ لم يصل رد من الميكروفون';
+        $('#heardText').textContent = 'لم يستجب التعرف الصوتي. تأكد من السماح للميكروفون، أو استخدم الكتابة، أو أغلق النافذة إن انتهيت.';
+        showTypeFallback();
+      }, 12000);
+    }catch(e){ showTypeFallback(); }
   } else {
-    const sign = parsed.type === 'add' ? '+' : '−';
-    toast(`✓ ${customer.name} ${sign}${fmt(parsed.amount)} — الرصيد الجديد: ${fmt(newBal)}`, 3500);
-    closeRecordModal();
-    if(App.currentView === 'customer') renderCustomerPage(App.activeCustomerId);
-    if(App.currentView === 'home') renderHome();
+    showTypeFallback();
   }
 }
 
