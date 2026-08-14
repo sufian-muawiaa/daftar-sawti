@@ -114,6 +114,69 @@
     return matchedAny ? state.total : null;
   }
 
+  // يتحقق هل رمز نصي معين يمثل رقماً معروفاً (خانة أرقام، أو كلمة عدد عربية)
+  function isNumberWordToken(tok){
+    if(/^\d+$/.test(tok)) return true;
+    if(tok === NISF) return true;
+    if(TEENS[tok] !== undefined) return true;
+    if(SPECIAL[tok] !== undefined) return true;
+    if(HUNDREDS[tok] !== undefined) return true;
+    if(TENS[tok] !== undefined) return true;
+    if(ONES[tok] !== undefined) return true;
+    if(SCALE[tok] !== undefined) return true;
+    return false;
+  }
+
+  // يحلّل جملة قد تحتوي عدة أوامر متتالية بلا فواصل صمت كافية بينها
+  // مثل: "خالد إضافة خمسة آلاف عمر إضافة عشرة آلاف زيد طرح ألفين"
+  // يرجع مصفوفة أوامر منفصلة، أو null إن كانت الجملة تحتوي أمراً واحداً فقط
+  // (وحينها يُترك الأمر لـ parseCommand العادي بمساره المعتاد بكل ميزاته).
+  function parseMultipleCommands(rawText){
+    const norm = normalizeArabic(collapseGroupedNumbers(rawText));
+    let text = norm;
+    Object.keys(TEENS).forEach(k=>{
+      if(k.includes(' ')) text = text.replace(new RegExp(k,'g'), k.replace(/ /g,'_'));
+    });
+    const tokens = text.split(/\s+/).filter(Boolean);
+
+    const actionIdxs = [];
+    tokens.forEach((raw,i)=>{
+      const t = raw.replace(/_/g,' ');
+      if(ADD_WORDS.includes(t)) actionIdxs.push({index:i, type:'add'});
+      else if(SUB_WORDS.includes(t)) actionIdxs.push({index:i, type:'subtract'});
+    });
+
+    if(actionIdxs.length <= 1) return null; // أمر واحد أو لا شيء: نترك المعالجة لـ parseCommand
+
+    const commands = [];
+    let nameStart = 0;
+    for(let k=0;k<actionIdxs.length;k++){
+      const {index, type} = actionIdxs[k];
+      const name = tokens.slice(nameStart, index).map(t=>t.replace(/_/g,' ')).join(' ').trim();
+
+      // اجمع رموز المبلغ بعد كلمة العملية طالما هي أرقام (أو كلمة وصل "و")،
+      // وأول رمز مو رقم يعتبر بداية اسم الزبون التالي
+      let j = index + 1;
+      const amountTokens = [];
+      while(j < tokens.length){
+        const tj = tokens[j].replace(/_/g,' ');
+        const stripped = (tj.startsWith('و') && tj.length > 1) ? tj.slice(1) : tj;
+        if(tj === 'و' || isNumberWordToken(tj) || isNumberWordToken(stripped)){
+          amountTokens.push(tokens[j]);
+          j++;
+        } else break;
+      }
+      const amountPhrase = amountTokens.map(t=>t.replace(/_/g,' ')).join(' ');
+      const amount = wordsToNumber(amountPhrase) || 0;
+
+      if(name && amount > 0){
+        commands.push({name, type, amount, raw: rawText});
+      }
+      nameStart = j;
+    }
+    return commands.length >= 2 ? commands : null;
+  }
+
   /* ============ محرك تحليل الأوامر الصوتية ============ */
   const ADD_WORDS = ['اضافه','أضف','اضف','زاد','زياده','عليه','اشترى','اشتري','اخذ','أخذ'];
   const SUB_WORDS = ['طرح','اطرح','دفع','سدد','نقص','تنزيل','خصم','اعطى','اعطي'];
@@ -204,6 +267,7 @@
     normalizeArabic,
     wordsToNumber,
     parseCommand,
+    parseMultipleCommands,
     // نصدّرها أيضاً لأغراض الاختبار المتقدم إن لزم لاحقاً
     _internal: { ONES, TEENS, TENS, HUNDREDS, SPECIAL, SCALE }
   };

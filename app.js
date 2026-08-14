@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-    settings: { darkMode:false, quickMode:true, continuous:false, shopName:'', pin:'' }
+    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'' }
   };
 }
 
@@ -531,7 +531,9 @@ function renderSettingsForm(){
 }
 $('#setDark').addEventListener('change', e=>{
   DB.settings.darkMode = e.target.checked;
+  DB.settings.themeSet = true;
   document.body.classList.toggle('dark', DB.settings.darkMode);
+  applyTheme();
   save();
 });
 $('#setQuick').addEventListener('change', e=>{ DB.settings.quickMode = e.target.checked; save(); });
@@ -666,6 +668,23 @@ setupSpeechRecognition();
 
 // نقطة البدء الموحّدة والآمنة للاستماع: تُستخدم من كل مكان بدل استدعاء
 // recognition.start() مباشرة، لتفادي أخطاء التسابق عند بدء جلسة قبل انتهاء سابقتها فعلياً
+let micPrimed = false;
+// نطلب مرة واحدة بداية استخدام الميكروفون بخصائص تقليل الضجيج/الصدى المدمجة
+// بالمتصفح (echoCancellation, noiseSuppression, autoGainControl). هذا تحسين
+// "قدر الإمكان" فعلي ومتاح تقنياً — لكن بصراحة: متصفح الويب لا يمنحنا وصولاً
+// لبناء فلتر ذكاء اصطناعي حقيقي يفصل الصوت القريب عن الضجيج البعيد؛ هذي
+// الخصائص تعتمد على دعم المتصفح والجهاز نفسه وليست مضمونة النتيجة دائماً.
+async function primeMicrophoneOnce(){
+  if(micPrimed || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  micPrimed = true;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    });
+    stream.getTracks().forEach(t=> t.stop()); // كنا فقط نطلب الخصائص، ما نحتاج نبقي القناة مفتوحة
+  }catch(e){ /* تجاهل بصمت: لو رُفضت الصلاحية هنا، محرك التعرف الصوتي نفسه سيطلبها لاحقاً */ }
+}
+
 function startListeningSession(){
   if(!recognitionSupported || !isSecureContextForVoice()){ showTypeFallback(); return; }
   if(recognitionRunning){
@@ -674,6 +693,7 @@ function startListeningSession(){
     try{ recognition.stop(); }catch(e){}
     return;
   }
+  primeMicrophoneOnce();
   try{
     recognition.start();
     $('#btnRecord').classList.add('listening');
@@ -798,6 +818,16 @@ $('#typeInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventD
 
 function handleRecognizedText(text){
   clearListenWatchdog();
+
+  // جملة واحدة قد تحتوي عدة أوامر متتالية (بدون فاصل صمت كافٍ بينها بصوت البائع)
+  // مثل: "خالد إضافة خمسة آلاف عمر إضافة عشرة آلاف" — نفصلها ونسجّل كل واحدة لصاحبها
+  const multi = (window.DaftarParser && window.DaftarParser.parseMultipleCommands)
+    ? window.DaftarParser.parseMultipleCommands(text) : null;
+  if(multi && multi.length >= 2){
+    processMultipleCommands(multi, text);
+    return;
+  }
+
   const parsed = parseCommand(text);
   currentParsed = parsed;
 
@@ -917,6 +947,46 @@ $('#btnEditParsed').addEventListener('click', ()=>{
   }
 });
 
+// يسجّل عدة أوامر منفصلة وردت بجملة واحدة، كل واحدة لصاحبها، بلا مقاطعة
+// (باستثناء الأسماء المتشابهة: نأخذ أول تطابق تلقائياً تفادياً لمقاطعة الدفعة
+// بقائمة اختيار في منتصف تسجيل عدة عمليات؛ الاسم غير الموجود يُنشأ تلقائياً)
+function processMultipleCommands(commands, rawText){
+  $('#ambiguousBox').hidden = true;
+  $('#notFoundBox').hidden = true;
+  $('#parseResult').hidden = true;
+
+  const summary = [];
+  commands.forEach(cmd=>{
+    const matches = findCustomersByName(cmd.name);
+    let customer;
+    if(matches.length >= 1){
+      customer = matches[0];
+    } else {
+      const newId = createCustomer({name: cmd.name || 'زبون جديد'});
+      customer = DB.customers[newId];
+    }
+    addTransaction(customer.id, cmd.type, cmd.amount, {voiceText: rawText, items: []});
+    const newBal = customerBalance(customer.id);
+    const sign = cmd.type === 'add' ? '+' : '−';
+    logQuick(customer.name, cmd.type, cmd.amount);
+    summary.push(`${customer.name} ${sign}${fmt(cmd.amount)}`);
+  });
+
+  toast(`✓ تم تسجيل ${commands.length} عمليات: ` + summary.join('، '), 4200);
+
+  if(App.currentView === 'customer') renderCustomerPage(App.activeCustomerId);
+  if(App.currentView === 'home') renderHome();
+
+  $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
+  $('#heardText').textContent = 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
+  currentParsed = null;
+  activeParseCtx = null;
+  recognitionActiveText = '';
+  recognitionProcessed = false;
+
+  startListeningSession();
+}
+
 function confirmParsedTransaction(){
   if(!activeParseCtx) return;
   const wrap = $('#prEditWrap');
@@ -993,13 +1063,46 @@ window.addEventListener('appinstalled', ()=>{
   if(btn) btn.hidden = true;
 });
 
+function applyTheme(){
+  const isDark = document.body.classList.contains('dark');
+  const sun = document.getElementById('themeIconSun');
+  const moon = document.getElementById('themeIconMoon');
+  if(sun) sun.hidden = isDark;
+  if(moon) moon.hidden = !isDark;
+}
+
+function initTheme(){
+  if(!DB.settings.themeSet){
+    // أول زيارة: نحترم تفضيل نظام تشغيل الجهاز (ليلي/نهاري) تلقائياً
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.body.classList.toggle('dark', prefersDark);
+  } else {
+    document.body.classList.toggle('dark', !!DB.settings.darkMode);
+  }
+  applyTheme();
+}
+
+const themeToggleBtn = document.getElementById('btnThemeToggle');
+if(themeToggleBtn){
+  themeToggleBtn.addEventListener('click', ()=>{
+    const newDark = !document.body.classList.contains('dark');
+    document.body.classList.toggle('dark', newDark);
+    DB.settings.darkMode = newDark;
+    DB.settings.themeSet = true;
+    save();
+    applyTheme();
+    const setDarkCheckbox = document.getElementById('setDark');
+    if(setDarkCheckbox) setDarkCheckbox.checked = newDark;
+  });
+}
+
 /* ============ تهيئة أولية ============ */
 function init(){
   if(!isSecureContextForVoice()){
     const w = document.getElementById('voiceWarning');
     if(w) w.hidden = false;
   }
-  if(DB.settings.darkMode) document.body.classList.add('dark');
+  initTheme();
   if(DB.settings.pin){
     const entered = prompt('أدخل الرقم السري لفتح الدفتر:');
     if(entered !== DB.settings.pin){
