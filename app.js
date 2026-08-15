@@ -700,6 +700,13 @@ function isSecureContextForVoice(){
   return false;
 }
 
+// متصفحات الموبايل (خصوصاً أندرويد) تتعامل مع خاصية التعرف الصوتي المستمر
+// (continuous) بشكل غير مستقر مقارنة بكروم على الحاسوب — أحياناً لا تعمل
+// إطلاقاً، أو تُطلق خطأ "no-speech" بسرعة كبيرة. لهذا نعطّل الاستماع المستمر
+// على الموبايل تحديداً ونعتمد بدلاً منه على إعادة تشغيل الجلسة تلقائياً بعد
+// كل توقف قصير (نفس الفكرة، بس بجلسات متتالية قصيرة بدل جلسة واحدة طويلة)
+const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile|Opera Mini/i.test(navigator.userAgent);
+
 function setupSpeechRecognition(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SR || !isSecureContextForVoice()){ recognitionSupported = false; return; }
@@ -707,9 +714,7 @@ function setupSpeechRecognition(){
   recognition = new SR();
   recognition.lang = 'ar-SA';
   recognition.interimResults = true;
-  // نُبقي الاستماع مستمراً دائماً (بدل الاعتماد على "isFinal" اللي يقطع الكلام
-  // عند أول توقف قصير بين الكلمات) ونتحكم نحن بلحظة الانتهاء عبر مؤقت صمت خاص بنا
-  recognition.continuous = true;
+  recognition.continuous = !isMobileDevice;
   recognition.maxAlternatives = 1;
 
   recognition.onstart = ()=>{
@@ -736,9 +741,20 @@ function setupSpeechRecognition(){
       toast('يرجى السماح باستخدام الميكروفون من إعدادات المتصفح');
       showTypeFallback();
     } else if(ev.error === 'no-speech'){
-      $('#recordStateLabel').textContent = '🔇 لم أسمع أي صوت';
-      $('#heardText').textContent = 'لم يصلني أي صوت. اضغط الختم للمحاولة مجدداً، أو استخدم الكتابة بالأسفل.';
-      showTypeFallback();
+      // شائع جداً على الموبايل: مهلة الصمت الداخلية للمتصفح أقصر بكثير من
+      // الحاسوب، فيُطلق هذا الخطأ بسرعة حتى لو المستخدم لسا ما بدأ الكلام
+      // (مثلاً وهو بانتظار قول الكلمة المفتاحية). طالما النافذة لسا مفتوحة
+      // نعيد المحاولة تلقائياً بصمت بدل التوقف والتحول لخانة الكتابة —
+      // وإلا كانت الكلمة المفتاحية تبدو "ما تستجيب إطلاقاً" على الموبايل
+      if(!$('#recordModal').hidden){
+        recognitionActiveText = '';
+        recognitionProcessed = false;
+        setTimeout(()=>{ if(!$('#recordModal').hidden) startListeningSession(); }, 300);
+      } else {
+        showTypeFallback();
+      }
+    } else if(ev.error === 'aborted'){
+      // إيقاف متعمّد من كودنا (مثلاً عند إعادة التشغيل)، ليس خطأ فعلياً — تجاهله بصمت
     } else {
       $('#recordStateLabel').textContent = '⚠️ تعذر التعرف على الصوت';
       $('#heardText').textContent = 'حدث خطأ في التعرف الصوتي (' + ev.error + '). جرّب الكتابة بدلاً منه:';
