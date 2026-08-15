@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body translate="no" class="notranslate">
@@ -91,6 +92,11 @@
           <svg viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg>
           <span>النسخ الاحتياطي</span>
         </button>
+        <button class="tile" data-nav="sync">
+          <svg viewBox="0 0 24 24"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.1v-2a4 4 0 0 1 4-4h14"/><path d="M7 21.9l-4-4 4-4"/><path d="M21 11.9v2a4 4 0 0 1-4 4H3"/></svg>
+          <span>مزامنة لحظية</span>
+          <span class="tile-dot" id="syncStatusDot" hidden></span>
+        </button>
         <button class="tile" data-nav="trash">
           <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
           <span>سجل المحذوفات</span>
@@ -149,6 +155,7 @@
         <span class="balance-label">إجمالي الدين الحالي</span>
         <span class="balance-value" id="custBalance">0</span>
         <span class="balance-unit">ل.س</span>
+        <div class="balance-extra" id="custBalanceExtra" hidden></div>
       </div>
 
       <div class="action-row">
@@ -225,6 +232,41 @@
       <p class="hint">سيتم استبدال كامل بيانات الدفتر الحالية بالنسخة المستعادة.</p>
     </section>
 
+    <!-- ===== المزامنة اللحظية ===== -->
+    <section class="view" id="view-sync" data-view hidden>
+      <button class="back-link" data-nav="home">‹ رجوع</button>
+      <h2 class="view-title">مزامنة لحظية بين جهازين</h2>
+      <p class="muted-line">
+        اربط جهازك بجهاز آخر يشغّل نفس التطبيق ليتشاركا نفس دفتر الزبائن لحظياً —
+        أي عملية تُسجَّل على أحدهما تظهر فوراً على الآخر.
+      </p>
+      <div class="sync-warning">
+        ⚠️ <b>مهم:</b> يجب أن يكون الجهازان مفتوحَين على هذه الشاشة وبنفس اللحظة
+        على الإنترنت ليحدث الاتصال. الاتصال مباشر بين الجهازين فقط (لا تُخزَّن
+        بياناتك على أي خادم وسيط)، لكن أي شخص يعرف اسم القناة <b>والرقم السري</b>
+        معاً يقدر يتصل بنفس القناة — اختر رقماً سرياً لست سهل التخمين ولا تشاركه
+        إلا مع من تثق فيه.
+      </div>
+
+      <form id="formSyncConnect" class="form-grid">
+        <label>اسم القناة (اتفق عليه مع الجهاز الثاني)
+          <input type="text" id="syncChannelInput" placeholder="مثال: محل-ابو-خالد" required>
+        </label>
+        <label>الرقم السري المشترك
+          <input type="password" id="syncPinInput" placeholder="رقم أو كلمة سر يعرفها الجهازان فقط" required minlength="4">
+        </label>
+        <button type="submit" class="primary-btn" id="btnSyncConnect">🔗 اتصال</button>
+      </form>
+      <button class="pill-btn ghost" id="btnSyncDisconnect" hidden style="margin-top:10px;width:100%">✕ قطع الاتصال</button>
+
+      <div class="sync-status" id="syncStatusBox">
+        <span class="sync-dot" id="syncStatusIndicator"></span>
+        <span id="syncStatusText">غير متصل</span>
+      </div>
+
+      <div id="syncLog" class="quick-log"></div>
+    </section>
+
     <!-- ===== سجل المحذوفات ===== -->
     <section class="view" id="view-trash" data-view hidden>
       <button class="back-link" data-nav="home">‹ رجوع</button>
@@ -257,6 +299,27 @@
         <label class="switch-row">
           <span>الوضع السريع المستمر (تسجيل زبون تلو الآخر)</span>
           <input type="checkbox" id="setContinuous">
+        </label>
+        <label class="switch-row">
+          <span>الكلمة المفتاحية (تجاهل أي كلام لا يبدأ بها — يمنع تسجيل الأحاديث الجانبية بالغلط)</span>
+          <input type="checkbox" id="setWakeWordEnabled">
+        </label>
+        <label class="field-row">
+          <span>الكلمة المفتاحية نفسها</span>
+          <input type="text" id="setWakeWord" placeholder="مثال: دفتر">
+        </label>
+        <label class="field-row">
+          <span>لهجتك (يحسّن دقة التعرف الصوتي)</span>
+          <select id="setDialect">
+            <option value="ar-SA">الخليج / الفصحى (افتراضي)</option>
+            <option value="ar-EG">مصر</option>
+            <option value="ar-LB">لبنان</option>
+            <option value="ar-JO">الأردن / بلاد الشام</option>
+            <option value="ar-IQ">العراق</option>
+            <option value="ar-AE">الإمارات</option>
+            <option value="ar-KW">الكويت</option>
+            <option value="ar-MA">المغرب</option>
+          </select>
         </label>
         <label class="field-row">
           <span>اسم المحل (يظهر في الفاتورة والمشاركة)</span>

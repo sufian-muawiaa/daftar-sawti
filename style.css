@@ -210,6 +210,7 @@ a{color:inherit;}
 .balance-label{display:block; font-size:13px; opacity:.8;}
 .balance-value{display:block; font-family:var(--font-display); font-size:38px; font-weight:700; color:var(--brass-light); margin:4px 0;}
 .balance-unit{font-size:13px; opacity:.75;}
+.balance-extra{margin-top:8px; padding-top:8px; border-top:1px dashed rgba(243,236,216,.25); font-size:14px; opacity:.9; display:flex; flex-direction:column; gap:2px;}
 
 .action-row{display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
 .pill-btn{
@@ -256,6 +257,25 @@ a{color:inherit;}
   font-weight:800; padding:13px; border-radius:var(--radius-m); margin-top:12px; box-shadow:0 2px 6px var(--shadow);
 }
 
+/* ===== المزامنة اللحظية ===== */
+.sync-warning{
+  background:#F4E2C6; color:#5A3B12; border:1.5px solid var(--brass);
+  border-radius:var(--radius-s); padding:12px 14px; margin:14px 0; font-size:13px; line-height:1.7;
+}
+.sync-status{
+  display:flex; align-items:center; gap:10px; margin-top:16px; padding:14px;
+  background:var(--cream-card); border-radius:var(--radius-m); box-shadow:0 1px 4px var(--shadow);
+  font-weight:700; font-size:14px;
+}
+.sync-dot{width:12px; height:12px; border-radius:50%; background:#9C3B2A; flex-shrink:0;}
+.sync-dot.connecting{background:var(--brass); animation:pulseDot 1s ease-in-out infinite;}
+.sync-dot.connected{background:#2F6E4E;}
+@keyframes pulseDot{0%,100%{opacity:1;} 50%{opacity:.4;}}
+.tile-dot{
+  position:absolute; top:10px; left:10px; width:9px; height:9px; border-radius:50%; background:#2F6E4E;
+}
+.tile{position:relative;}
+
 /* ===== إحصائيات ===== */
 .stat-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:10px;}
 .stat-card{background:var(--cream-card); border-radius:var(--radius-m); padding:14px; box-shadow:0 2px 6px var(--shadow);}
@@ -270,7 +290,7 @@ a{color:inherit;}
   font-size:13.5px; font-weight:700; color:var(--ink);
 }
 .field-row{flex-direction:column; align-items:stretch;}
-.field-row input{border:1.5px solid var(--thread); border-radius:8px; padding:9px 10px; margin-top:6px; font-size:14px; background:var(--paper);}
+.field-row input, .field-row select{border:1.5px solid var(--thread); border-radius:8px; padding:9px 10px; margin-top:6px; font-size:14px; background:var(--paper); color:var(--paper-text);}
 .switch-row input[type=checkbox]{width:44px; height:24px; -webkit-appearance:none; appearance:none; background:var(--thread); border-radius:14px; position:relative; flex-shrink:0;}
 .switch-row input[type=checkbox]::before{
   content:""; position:absolute; top:2px; right:2px; width:20px; height:20px; border-radius:50%; background:#fff; transition:transform .15s;

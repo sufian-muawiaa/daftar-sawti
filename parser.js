@@ -64,6 +64,19 @@
   const SCALE = buildNumMap([['ألف',1000],['الف',1000],['آلاف',1000],['الاف',1000],['مليون',1000000],['ملايين',1000000]]);
   const NISF = normalizeArabic('نصف');
 
+  // العملات المدعومة: نتعرّف على اسم العملة المنطوق بعد الرقم مباشرة
+  // (مثلاً "مئتين دولار") ونحدد رمز العملة القياسي (ISO). الليرة السورية
+  // هي الافتراضية دائماً إن لم يُذكر اسم عملة صراحةً.
+  const DEFAULT_CURRENCY = 'SYP';
+  const CURRENCY_MAP = buildNumMap([
+    ['دولار','USD'],['دولارات','USD'],['دولاران','USD'],['دولارين','USD'],
+    ['يورو','EUR'],['يوروهات','EUR'],
+    ['ليرة','SYP'],['ليره','SYP'],['ل.س','SYP'],['لس','SYP'],['ليرة سورية','SYP'],['ليره سوريه','SYP'],
+    ['ريال','SAR'],['ريالات','SAR'],['ريال سعودي','SAR'],
+    ['درهم','AED'],['دراهم','AED'],['درهم اماراتي','AED'],
+  ]);
+  const CURRENCY_SYMBOLS = { SYP:'ل.س', USD:'$', EUR:'€', SAR:'ر.س', AED:'د.إ' };
+
   // يحاول مطابقة رمز واحد ضمن حالة التراكم الحالية؛ يُرجع true إذا تم التعرف عليه
   function tryMatchNumToken(tok, state){
     if(/^\d+$/.test(tok)){ state.current += parseInt(tok,10); return true; }
@@ -177,9 +190,58 @@
     return commands.length >= 2 ? commands : null;
   }
 
+  // يستهلك رموز الرقم من بداية النص طالما هي كلمات/أرقام معروفة، ثم يفحص
+  // إن كانت الكلمة التالية اسم عملة، وأخيراً يعتبر كل ما تبقى "اسم السلعة"
+  // مثال: "مئة الف معدات صحية" => {amount:100000, currency:'SYP', itemName:'معدات صحية'}
+  // مثال: "مئتين دولار" => {amount:200, currency:'USD', itemName:''}
+  function parseAmountCurrencyItem(phrase){
+    let text = phrase;
+    Object.keys(TEENS).forEach(k=>{
+      if(k.includes(' ')) text = text.replace(new RegExp(k,'g'), k.replace(/ /g,'_'));
+    });
+    const rawTokens = text.split(/\s+/).filter(Boolean);
+    const state = {total:0, current:0, lastScale:0};
+    let i = 0, matchedAny = false;
+
+    while(i < rawTokens.length){
+      const tok = rawTokens[i].replace(/_/g,' ');
+      if(tok === 'و' || tok === ','){ i++; continue; }
+      let ok = tryMatchNumToken(tok, state);
+      if(!ok && tok.startsWith('و') && tok.length > 1) ok = tryMatchNumToken(tok.slice(1), state);
+      if(ok){ matchedAny = true; i++; } else break;
+    }
+    state.total += state.current;
+    const amount = matchedAny ? state.total : 0;
+
+    let currency = null;
+    if(i < rawTokens.length){
+      const nextTok = rawTokens[i].replace(/_/g,' ');
+      const stripped = (nextTok.startsWith('و') && nextTok.length > 1) ? nextTok.slice(1) : nextTok;
+      if(CURRENCY_MAP[nextTok] !== undefined){ currency = CURRENCY_MAP[nextTok]; i++; }
+      else if(CURRENCY_MAP[stripped] !== undefined){ currency = CURRENCY_MAP[stripped]; i++; }
+    }
+    const itemName = rawTokens.slice(i).map(t=>t.replace(/_/g,' ')).join(' ').trim();
+    return { amount, currency, itemName };
+  }
+
+  // يبحث عن أول ذكر لاسم عملة في أي مكان بالنص (لأغراض تحديد عملة العملية كاملة)
+  function detectCurrency(text){
+    const tokens = String(text).split(/\s+/).filter(Boolean);
+    for(const raw of tokens){
+      const stripped = (raw.startsWith('و') && raw.length > 1) ? raw.slice(1) : raw;
+      if(CURRENCY_MAP[raw] !== undefined) return CURRENCY_MAP[raw];
+      if(CURRENCY_MAP[stripped] !== undefined) return CURRENCY_MAP[stripped];
+    }
+    return DEFAULT_CURRENCY;
+  }
+
   /* ============ محرك تحليل الأوامر الصوتية ============ */
-  const ADD_WORDS = ['اضافه','أضف','اضف','زاد','زياده','عليه','اشترى','اشتري','اخذ','أخذ'];
-  const SUB_WORDS = ['طرح','اطرح','دفع','سدد','نقص','تنزيل','خصم','اعطى','اعطي'];
+  // كلمات "الإضافة" مجمّعة من الفصحى ولهجات شامية وخليجية ومصرية شائعة
+  const ADD_WORDS = ['اضافه','أضف','اضف','زاد','زياده','عليه','اشترى','اشتري','اخذ','أخذ',
+    'زود','ضيف','حط','سجل','سجلها','اكتب'];
+  // كلمات "الطرح/الدفع" بنفس التنويع اللهجي
+  const SUB_WORDS = ['طرح','اطرح','دفع','سدد','نقص','تنزيل','خصم','اعطى','اعطي',
+    'دفعلي','سددلي','فك','رجع','ارجع'];
   const OPEN_WORDS = ['افتح','صفحه','اذهب الى','اذهب الي'];
   const STRIP_WORDS = ['صفحه','ليره','سوريه','ل.س','لس','ل س'];
 
@@ -189,12 +251,43 @@
     return t.replace(/\s+/g,' ').trim();
   }
 
-  // يحاول إيجاد أول كلمة عملية (إضافة/طرح) ضمن النص ويرجع فهرسها والنوع
+  // مسافة ليفنشتاين (عدد التعديلات الحرفية اللازمة لتحويل كلمة لأخرى) — نستخدمها
+  // للتسامح مع خطأ حرف واحد بالتعرف الصوتي (فرق لهجة/نطق) بدل رفض الكلمة كلياً
+  function levenshtein(a, b){
+    const m = a.length, n = b.length;
+    if(m === 0) return n;
+    if(n === 0) return m;
+    const dp = Array.from({length:m+1}, (_,i)=> [i].concat(Array(n).fill(0)));
+    for(let j=0;j<=n;j++) dp[0][j] = j;
+    for(let i=1;i<=m;i++){
+      for(let j=1;j<=n;j++){
+        dp[i][j] = a[i-1]===b[j-1] ? dp[i-1][j-1]
+          : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      }
+    }
+    return dp[m][n];
+  }
+
+  // يبحث عن أقرب كلمة مطابقة تقريبياً ضمن قائمة (فرق حرف واحد كحد أقصى،
+  // وبطول كلمة 4 أحرف فأكثر تفادياً لمطابقات خاطئة بكلمات قصيرة)
+  function fuzzyIncludes(list, tok){
+    if(list.includes(tok)) return true;
+    if(tok.length < 4) return false;
+    return list.some(w => w.length >= 4 && Math.abs(w.length - tok.length) <= 1 && levenshtein(w, tok) === 1);
+  }
+
+  // يحاول إيجاد أول كلمة عملية (إضافة/طرح) ضمن النص ويرجع فهرسها والنوع —
+  // مطابقة دقيقة أولاً، وإن لم توجد نجرّب مطابقة تقريبية (تصحيح تلقائي بسيط)
   function findActionWord(tokens){
     for(let i=0;i<tokens.length;i++){
       const t = tokens[i];
       if(ADD_WORDS.includes(t)) return {index:i, type:'add', word:t};
       if(SUB_WORDS.includes(t)) return {index:i, type:'subtract', word:t};
+    }
+    for(let i=0;i<tokens.length;i++){
+      const t = tokens[i];
+      if(fuzzyIncludes(ADD_WORDS, t)) return {index:i, type:'add', word:t, fuzzy:true};
+      if(fuzzyIncludes(SUB_WORDS, t)) return {index:i, type:'subtract', word:t, fuzzy:true};
     }
     return null;
   }
@@ -234,14 +327,16 @@
     // عناصر متعددة مفصولة بفواصل: "سكر عشرين ألف , رز خمسة عشر ألف"
     let items = [];
     let totalAmount = 0;
+    let currency = DEFAULT_CURRENCY;
     if(amountPart.includes(',')){
+      currency = detectCurrency(amountPart); // عملة واحدة للعملية كاملة حتى لو تعددت الأصناف
       const segs = amountPart.split(',').map(s=>s.trim()).filter(Boolean);
       for(const seg of segs){
         const num = wordsToNumber(seg);
         if(num !== null){
-          // استخراج اسم الصنف: أزل الكلمات الرقمية من القطعة
+          // استخراج اسم الصنف: أزل الكلمات الرقمية وأسماء العملات من القطعة
           let itemName = seg;
-          Object.keys(ONES).concat(Object.keys(TENS),Object.keys(HUNDREDS),Object.keys(SCALE),Object.keys(SPECIAL),[NISF])
+          Object.keys(ONES).concat(Object.keys(TENS),Object.keys(HUNDREDS),Object.keys(SCALE),Object.keys(SPECIAL),Object.keys(CURRENCY_MAP),[NISF])
             .forEach(w=>{ itemName = itemName.replace(new RegExp('\\b'+w+'\\b','g'),''); });
           itemName = itemName.replace(/\s+/g,' ').trim();
           items.push({name:itemName || 'صنف', amount:num});
@@ -249,8 +344,12 @@
         }
       }
     } else {
-      const num = wordsToNumber(amountPart);
-      totalAmount = num || 0;
+      // "مئة الف معدات صحية" أو "مئتين دولار": نستخرج المبلغ والعملة، وأي نص
+      // متبقٍ بعدهما يُعتبر اسم السلعة/الصنف المرتبط بهذه العملية
+      const r = parseAmountCurrencyItem(amountPart);
+      totalAmount = r.amount;
+      currency = r.currency || DEFAULT_CURRENCY;
+      if(r.itemName) items.push({name: r.itemName, amount: totalAmount});
     }
 
     return {
@@ -258,9 +357,24 @@
       name: namePart,
       type: action.type,
       amount: totalAmount,
+      currency,
       items,
       raw: rawText
     };
+  }
+
+  // يبحث عن "الكلمة المفتاحية" داخل نص التسجيل، ويُرجع فقط ما بعدها (الأمر الفعلي)،
+  // أو null إن لم تُذكر إطلاقاً (يعني الكلام على الأغلب خلفية/ضجيج غير موجّه للتطبيق)
+  // مثال: applyWakeWord("في الجو حر اليوم دفتر خالد إضافة خمسين ألف", "دفتر")
+  //       => "خالد إضافة خمسين ألف" (تجاهل الجزء قبل الكلمة المفتاحية تلقائياً)
+  function applyWakeWord(rawText, wakeWord){
+    if(!wakeWord) return rawText; // لا كلمة مفتاحية مُفعّلة: مرّر النص كما هو
+    const wake = normalizeArabic(wakeWord);
+    if(!wake) return rawText;
+    const normText = normalizeArabic(rawText);
+    const idx = normText.indexOf(wake);
+    if(idx === -1) return null;
+    return normText.slice(idx + wake.length).trim();
   }
 
   return {
@@ -268,7 +382,10 @@
     wordsToNumber,
     parseCommand,
     parseMultipleCommands,
+    applyWakeWord,
+    CURRENCY_SYMBOLS,
+    DEFAULT_CURRENCY,
     // نصدّرها أيضاً لأغراض الاختبار المتقدم إن لزم لاحقاً
-    _internal: { ONES, TEENS, TENS, HUNDREDS, SPECIAL, SCALE }
+    _internal: { ONES, TEENS, TENS, HUNDREDS, SPECIAL, SCALE, CURRENCY_MAP }
   };
 }));

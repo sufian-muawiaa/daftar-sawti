@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'' }
+    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'', dialectLocale:'ar-SA', wakeWordEnabled:true, wakeWord:'دفتر', syncChannel:'' }
   };
 }
 
@@ -63,18 +63,39 @@ function save(){
   localStorage.setItem(STORE_KEY, JSON.stringify(DB));
 }
 
-/* ============ منطق الحسابات ============ */
-function customerBalance(customerId){
+/* ============ منطق الحسابات (متعدد العملات) ============ */
+const DEFAULT_CURRENCY = (window.DaftarParser && window.DaftarParser.DEFAULT_CURRENCY) || 'SYP';
+const CURRENCY_SYMBOLS = (window.DaftarParser && window.DaftarParser.CURRENCY_SYMBOLS) || {SYP:'ل.س'};
+
+// يرجع رصيد الزبون ككائن لكل عملة على حدة، مثلاً {SYP: 65000, USD: 200}
+// (كل عملة مستقلة تماماً عن الأخرى — لا نحوّل بينها لأننا لا نملك سعر صرف موثوق)
+function customerBalanceMap(customerId){
   const c = DB.customers[customerId];
-  if(!c) return 0;
-  let bal = Number(c.openingBalance) || 0;
+  const map = {};
+  if(!c) return map;
+  const opening = Number(c.openingBalance) || 0;
+  if(opening !== 0) map[DEFAULT_CURRENCY] = (map[DEFAULT_CURRENCY]||0) + opening;
   const txs = Object.values(DB.transactions)
     .filter(t => t.customerId === customerId && !t.deleted)
     .sort((a,b)=> a.date - b.date);
   for(const t of txs){
-    bal += (t.type === 'add') ? t.amount : -t.amount;
+    const cur = t.currency || DEFAULT_CURRENCY;
+    map[cur] = (map[cur]||0) + ((t.type === 'add') ? t.amount : -t.amount);
   }
-  return bal;
+  return map;
+}
+
+// رصيد مبسّط برقم واحد بعملة الليرة (للاستخدام بالترتيب/التلوين حيث يصعب
+// المقارنة بين عملات مختلطة بشكل طبيعي — تبسيط مقصود، العرض دائماً متعدد العملات)
+function customerBalance(customerId){
+  return customerBalanceMap(customerId)[DEFAULT_CURRENCY] || 0;
+}
+
+// ينسّق كائن رصيد متعدد العملات كنص عربي مقروء: "65,000 ل.س، 200 $"
+function formatBalanceMap(map){
+  const entries = Object.entries(map || {}).filter(([,val])=> val !== 0);
+  if(entries.length === 0) return `0 ${CURRENCY_SYMBOLS[DEFAULT_CURRENCY]}`;
+  return entries.map(([cur,val])=> `${fmt(val)} ${CURRENCY_SYMBOLS[cur]||cur}`).join('، ');
 }
 
 function customerTxs(customerId, includeDeleted=false){
@@ -83,20 +104,38 @@ function customerTxs(customerId, includeDeleted=false){
     .sort((a,b)=> b.date - a.date);
 }
 
+// سجل حركات بالترتيب الزمني مع الرصيد التراكمي *بعملة كل عملية نفسها* بعد كل حركة
 function runningBalances(customerId){
   const c = DB.customers[customerId];
-  let bal = Number(c.openingBalance) || 0;
+  if(!c) return [];
+  const runningMap = {};
+  const opening = Number(c.openingBalance) || 0;
+  if(opening !== 0) runningMap[DEFAULT_CURRENCY] = opening;
   const txs = customerTxs(customerId).slice().sort((a,b)=> a.date - b.date);
   const out = [];
   for(const t of txs){
-    bal += (t.type === 'add') ? t.amount : -t.amount;
-    out.push({tx:t, balance:bal});
+    const cur = t.currency || DEFAULT_CURRENCY;
+    const next = (runningMap[cur] || 0) + (t.type === 'add' ? t.amount : -t.amount);
+    runningMap[cur] = next;
+    out.push({tx:t, balance:next, currency:cur});
   }
   return out.reverse();
 }
 
+// إجمالي الديون المستحقة لكل عملة عبر كل الزبائن
+function totalDebtMap(){
+  const totals = {};
+  Object.keys(DB.customers).forEach(id=>{
+    const map = customerBalanceMap(id);
+    Object.entries(map).forEach(([cur,val])=>{
+      if(val > 0) totals[cur] = (totals[cur]||0) + val;
+    });
+  });
+  return totals;
+}
+
 function totalDebt(){
-  return Object.keys(DB.customers).reduce((s,id)=> s + Math.max(0, customerBalance(id)), 0);
+  return totalDebtMap()[DEFAULT_CURRENCY] || 0;
 }
 
 /* ============ محرك الأرقام والأوامر الصوتية ============ */
@@ -133,11 +172,12 @@ function renderView(view, params){
   if(view === 'trash') renderTrash();
   if(view === 'reminders') renderReminders();
   if(view === 'settings') renderSettingsForm();
+  if(view === 'sync') renderSyncView();
 }
 
 /* ============ الشاشة الرئيسية ============ */
 function renderHome(){
-  $('#homeTotalDebt').textContent = fmt(totalDebt()) + ' ل.س';
+  $('#homeTotalDebt').textContent = formatBalanceMap(totalDebtMap());
   const recent = Object.values(DB.transactions)
     .filter(t=>!t.deleted)
     .sort((a,b)=> b.date - a.date)
@@ -149,10 +189,11 @@ function renderHome(){
   } else {
     recent.forEach(t=>{
       const c = DB.customers[t.customerId];
+      const symbol = CURRENCY_SYMBOLS[t.currency || DEFAULT_CURRENCY] || (t.currency || DEFAULT_CURRENCY);
       const row = document.createElement('div');
       row.className = 'recent-item';
       row.innerHTML = `<span>${c ? esc(c.name) : '—'}</span>
-        <b class="${t.type==='add'?'amt-add':'amt-sub'}">${t.type==='add'?'+':'−'}${fmt(t.amount)}</b>`;
+        <b class="${t.type==='add'?'amt-add':'amt-sub'}">${t.type==='add'?'+':'−'}${fmt(t.amount)} ${symbol}</b>`;
       row.addEventListener('click', ()=> navigate('customer', {id:t.customerId}));
       wrap.appendChild(row);
     });
@@ -180,7 +221,7 @@ function renderCustomers(){
       (c.altNames||[]).some(a => normalizeArabic(a).includes(q)));
   }
 
-  list = list.map(c => ({c, bal: customerBalance(c.id), last: lastTxDate(c.id)}));
+  list = list.map(c => ({c, bal: customerBalance(c.id), balMap: customerBalanceMap(c.id), last: lastTxDate(c.id)}));
 
   if(sortBy === 'name') list.sort((a,b)=> a.c.name.localeCompare(b.c.name,'ar'));
   if(sortBy === 'debtDesc') list.sort((a,b)=> b.bal - a.bal);
@@ -191,7 +232,7 @@ function renderCustomers(){
   wrap.innerHTML = '';
   $('#customersEmpty').hidden = list.length > 0;
 
-  list.forEach(({c,bal,last})=>{
+  list.forEach(({c,bal,balMap,last})=>{
     const row = document.createElement('div');
     row.className = 'customer-row';
     const cls = bal > 0 ? 'pos' : (bal < 0 ? 'neg' : 'zero');
@@ -201,7 +242,7 @@ function renderCustomers(){
         <div class="cname">${esc(c.name)}</div>
         <div class="clast">${last ? 'آخر عملية: '+fmtDate(last) : 'لا عمليات بعد'}</div>
       </div>
-      <div class="cbal ${cls}">${fmt(bal)}</div>`;
+      <div class="cbal ${cls}">${esc(formatBalanceMap(balMap))}</div>`;
     row.addEventListener('click', ()=> navigate('customer', {id:c.id}));
     wrap.appendChild(row);
   });
@@ -228,32 +269,45 @@ function renderCustomerPage(id){
   if(c.address) metaParts.push('📍 '+c.address);
   $('#custMeta').textContent = metaParts.join('  •  ');
 
-  const bal = customerBalance(id);
+  const balMap = customerBalanceMap(id);
+  const bal = balMap[DEFAULT_CURRENCY] || 0;
   $('#custBalance').textContent = fmt(bal);
   $('#balanceCard').style.background = bal < 0
     ? 'linear-gradient(135deg,#1F4433,#2F6E4E)'
     : 'linear-gradient(135deg, var(--ink), var(--ink-3))';
+
+  const extraCurrencies = Object.entries(balMap).filter(([cur,val]) => cur !== DEFAULT_CURRENCY && val !== 0);
+  const extraEl = $('#custBalanceExtra');
+  if(extraCurrencies.length){
+    extraEl.hidden = false;
+    extraEl.innerHTML = extraCurrencies.map(([cur,val])=>
+      `<span>${fmt(val)} ${esc(CURRENCY_SYMBOLS[cur]||cur)}</span>`).join('');
+  } else {
+    extraEl.hidden = true;
+    extraEl.innerHTML = '';
+  }
 
   const rows = runningBalances(id);
   const wrap = $('#txTable');
   wrap.innerHTML = '';
   $('#txEmpty').hidden = rows.length > 0;
 
-  rows.forEach(({tx,balance})=>{
+  rows.forEach(({tx,balance,currency})=>{
     const row = document.createElement('div');
     row.className = 'tx-row';
     const sign = tx.type === 'add' ? '+' : '−';
     const cls = tx.type === 'add' ? 'amt-add' : 'amt-sub';
+    const symbol = CURRENCY_SYMBOLS[currency] || currency;
     let itemsLine = '';
     if(tx.items && tx.items.length){
-      itemsLine = `<div class="tx-note">${tx.items.map(i=>`${esc(i.name)}: ${fmt(i.amount)}`).join('، ')}</div>`;
+      itemsLine = `<div class="tx-note">${tx.items.map(i=>`${esc(i.name)}: ${fmt(i.amount)} ${symbol}`).join('، ')}</div>`;
     }
     row.innerHTML = `
       <div class="tx-top">
         <span class="tx-date">${fmtDateTime(tx.date)}</span>
-        <b class="tx-amt ${cls}">${sign}${fmt(tx.amount)}</b>
+        <b class="tx-amt ${cls}">${sign}${fmt(tx.amount)} ${symbol}</b>
       </div>
-      <div class="tx-bal">الرصيد بعد العملية: ${fmt(balance)}</div>
+      <div class="tx-bal">الرصيد بعد العملية (${symbol}): ${fmt(balance)}</div>
       ${itemsLine}
       ${tx.note ? `<div class="tx-note">📝 ${esc(tx.note)}</div>` : ''}
       <div class="tx-actions">
@@ -278,6 +332,7 @@ function deleteTransaction(txId){
   if(!confirm('هل أنت متأكد من حذف العملية؟')) return;
   DB.transactions[txId].deleted = true;
   save();
+  broadcastSync({type:'tx_upsert', payload: DB.transactions[txId]});
   renderCustomerPage(App.activeCustomerId);
   toast('تم نقل العملية إلى سجل المحذوفات');
 }
@@ -290,6 +345,7 @@ function openEditTransaction(txId){
   if(isNaN(val)) return toast('رقم غير صالح');
   tx.amount = val;
   save();
+  broadcastSync({type:'tx_upsert', payload: tx});
   renderCustomerPage(App.activeCustomerId);
   toast('تم تعديل العملية');
 }
@@ -313,8 +369,10 @@ function manualTransaction(type){
 $('#btnCustNote').addEventListener('click', ()=>{
   const note = prompt('اكتب الملاحظة (أو استخدم لوحة المفاتيح الصوتية في جهازك):');
   if(!note) return;
-  DB.customers[App.activeCustomerId].notes = ((DB.customers[App.activeCustomerId].notes||'') + '\n' + note).trim();
+  const c = DB.customers[App.activeCustomerId];
+  c.notes = ((c.notes||'') + '\n' + note).trim();
   save();
+  broadcastSync({type:'customer_upsert', payload: c});
   toast('تم حفظ الملاحظة');
 });
 
@@ -325,13 +383,14 @@ $('#btnCustPrint').addEventListener('click', ()=> printCustomerStatement(App.act
 
 $('#btnCustShare').addEventListener('click', ()=>{
   const c = DB.customers[App.activeCustomerId];
-  const bal = customerBalance(c.id);
+  const balMap = customerBalanceMap(c.id);
   const rows = runningBalances(c.id).slice(0,10).reverse();
   let text = `كشف حساب ${c.name}\n`;
-  rows.forEach(({tx,balance})=>{
-    text += `${tx.type==='add'?'إضافة':'دفعة'}: ${fmt(tx.amount)} — الرصيد: ${fmt(balance)}\n`;
+  rows.forEach(({tx,balance,currency})=>{
+    const symbol = CURRENCY_SYMBOLS[currency] || currency;
+    text += `${tx.type==='add'?'إضافة':'دفعة'}: ${fmt(tx.amount)} ${symbol} — الرصيد: ${fmt(balance)} ${symbol}\n`;
   });
-  text += `\nالمتبقي: ${fmt(bal)} ل.س`;
+  text += `\nالمتبقي: ${formatBalanceMap(balMap)}`;
   if(navigator.share){
     navigator.share({title:'كشف حساب '+c.name, text}).catch(()=>{});
   } else {
@@ -346,15 +405,17 @@ $('#btnEditCustomer').addEventListener('click', ()=>{
   const phone = prompt('رقم الهاتف:', c.phone||'');
   c.phone = phone||'';
   save();
+  broadcastSync({type:'customer_upsert', payload: c});
   renderCustomerPage(c.id);
 });
 
 $('#btnDeleteCustomer').addEventListener('click', ()=>{
   const c = DB.customers[App.activeCustomerId];
   if(!c) return;
-  const bal = customerBalance(c.id);
-  const balWarning = bal !== 0
-    ? `\n\n⚠️ تنبيه: رصيد "${c.name}" الحالي هو ${fmt(bal)} ل.س — سيُحذف نهائياً مع كامل سجل عملياته ولن تقدر تسترجعه.`
+  const balMap = customerBalanceMap(c.id);
+  const hasBalance = Object.values(balMap).some(v => v !== 0);
+  const balWarning = hasBalance
+    ? `\n\n⚠️ تنبيه: رصيد "${c.name}" الحالي هو ${formatBalanceMap(balMap)} — سيُحذف نهائياً مع كامل سجل عملياته ولن تقدر تسترجعه.`
     : '';
   const ok = confirm(`هل أنت متأكد من حذف صفحة "${c.name}" نهائياً من الدفتر؟${balWarning}`);
   if(!ok) return;
@@ -369,23 +430,25 @@ function deleteCustomerCompletely(customerId){
     if(DB.transactions[txId].customerId === customerId) delete DB.transactions[txId];
   });
   save();
+  broadcastSync({type:'customer_hard_delete', payload:{id: customerId}});
 }
 
 function printCustomerStatement(customerId, title){
   const c = DB.customers[customerId];
   const shopName = DB.settings.shopName || 'دفتر الديون الصوتي';
   const rows = runningBalances(customerId).slice().reverse();
-  const bal = customerBalance(customerId);
+  const balMap = customerBalanceMap(customerId);
   let html = `<div style="font-family:sans-serif;direction:rtl">
     <h2>${esc(shopName)}</h2>
     <h3>${esc(title)} — ${esc(c.name)}</h3>
     <p>التاريخ: ${fmtDate(Date.now())} ${c.phone ? '| الهاتف: '+esc(c.phone) : ''}</p>
     <table style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
       <tr><th>التاريخ</th><th>العملية</th><th>المبلغ</th><th>الرصيد</th></tr>`;
-  rows.forEach(({tx,balance})=>{
-    html += `<tr><td>${fmtDate(tx.date)}</td><td>${tx.type==='add'?'إضافة':'دفعة'}</td><td>${fmt(tx.amount)}</td><td>${fmt(balance)}</td></tr>`;
+  rows.forEach(({tx,balance,currency})=>{
+    const symbol = CURRENCY_SYMBOLS[currency] || currency;
+    html += `<tr><td>${fmtDate(tx.date)}</td><td>${tx.type==='add'?'إضافة':'دفعة'}</td><td>${fmt(tx.amount)} ${symbol}</td><td>${fmt(balance)} ${symbol}</td></tr>`;
   });
-  html += `</table><h3>الإجمالي المتبقي: ${fmt(bal)} ل.س</h3></div>`;
+  html += `</table><h3>الإجمالي المتبقي: ${esc(formatBalanceMap(balMap))}</h3></div>`;
   const area = $('#printArea');
   area.innerHTML = html;
   area.hidden = false;
@@ -419,55 +482,66 @@ function createCustomer(data){
     id, createdAt: Date.now(), altNames:[], reminderDate:null, reminderNote:''
   }, data);
   save();
+  broadcastSync({type:'customer_upsert', payload: DB.customers[id]});
   return id;
 }
 
 function addTransaction(customerId, type, amount, extra={}){
   const id = uid();
   DB.transactions[id] = Object.assign({
-    id, customerId, type, amount, date: Date.now(), deleted:false, items:[]
+    id, customerId, type, amount, currency: DEFAULT_CURRENCY, date: Date.now(), deleted:false, items:[]
   }, extra);
   save();
+  broadcastSync({type:'tx_upsert', payload: DB.transactions[id]});
   return id;
 }
 
 /* ============ الإحصائيات ============ */
+function sumByCurrency(list){
+  const out = {};
+  list.forEach(t=>{
+    const cur = t.currency || DEFAULT_CURRENCY;
+    out[cur] = (out[cur]||0) + t.amount;
+  });
+  return out;
+}
+
 function renderStats(){
   const custs = Object.values(DB.customers);
   const allTx = Object.values(DB.transactions).filter(t=>!t.deleted);
   const todayStr = new Date().toDateString();
   const monthKey = new Date().toISOString().slice(0,7);
 
-  const totalD = totalDebt();
-  const totalPaid = allTx.filter(t=>t.type==='subtract').reduce((s,t)=>s+t.amount,0);
-  const debtToday = allTx.filter(t=>t.type==='add' && new Date(t.date).toDateString()===todayStr).reduce((s,t)=>s+t.amount,0);
-  const paidToday = allTx.filter(t=>t.type==='subtract' && new Date(t.date).toDateString()===todayStr).reduce((s,t)=>s+t.amount,0);
-  const debtMonth = allTx.filter(t=>t.type==='add' && new Date(t.date).toISOString().slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
-  const paidMonth = allTx.filter(t=>t.type==='subtract' && new Date(t.date).toISOString().slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
+  const totalDMap = totalDebtMap();
+  const totalPaidMap = sumByCurrency(allTx.filter(t=>t.type==='subtract'));
+  const debtTodayMap = sumByCurrency(allTx.filter(t=>t.type==='add' && new Date(t.date).toDateString()===todayStr));
+  const paidTodayMap = sumByCurrency(allTx.filter(t=>t.type==='subtract' && new Date(t.date).toDateString()===todayStr));
+  const debtMonthMap = sumByCurrency(allTx.filter(t=>t.type==='add' && new Date(t.date).toISOString().slice(0,7)===monthKey));
+  const paidMonthMap = sumByCurrency(allTx.filter(t=>t.type==='subtract' && new Date(t.date).toISOString().slice(0,7)===monthKey));
 
   const stats = [
-    ['إجمالي الديون', totalD],
-    ['إجمالي المدفوع (كل الوقت)', totalPaid],
-    ['عدد الزبائن', custs.length],
-    ['ديون اليوم', debtToday],
-    ['دفعات اليوم', paidToday],
-    ['ديون هذا الشهر', debtMonth],
-    ['دفعات هذا الشهر', paidMonth],
+    ['إجمالي الديون', formatBalanceMap(totalDMap)],
+    ['إجمالي المدفوع (كل الوقت)', formatBalanceMap(totalPaidMap)],
+    ['عدد الزبائن', fmt(custs.length)],
+    ['ديون اليوم', formatBalanceMap(debtTodayMap)],
+    ['دفعات اليوم', formatBalanceMap(paidTodayMap)],
+    ['ديون هذا الشهر', formatBalanceMap(debtMonthMap)],
+    ['دفعات هذا الشهر', formatBalanceMap(paidMonthMap)],
   ];
   const grid = $('#statGrid');
   grid.innerHTML = stats.map(([l,v])=>`
-    <div class="stat-card"><span class="sc-label">${l}</span><span class="sc-value">${fmt(v)}</span></div>`).join('');
+    <div class="stat-card"><span class="sc-label">${esc(l)}</span><span class="sc-value">${esc(v)}</span></div>`).join('');
 
-  const top = custs.map(c=>({c, bal:customerBalance(c.id)}))
+  const top = custs.map(c=>({c, bal:customerBalance(c.id), balMap:customerBalanceMap(c.id)}))
     .sort((a,b)=> b.bal - a.bal).slice(0,10);
   const wrap = $('#topDebtsList');
   wrap.innerHTML = '';
-  top.forEach(({c,bal})=>{
+  top.forEach(({c,balMap})=>{
     const row = document.createElement('div');
     row.className = 'customer-row';
     row.innerHTML = `<div class="cav">${esc(c.name.trim()[0]||'؟')}</div>
       <div class="cinfo"><div class="cname">${esc(c.name)}</div></div>
-      <div class="cbal pos">${fmt(bal)}</div>`;
+      <div class="cbal pos">${esc(formatBalanceMap(balMap))}</div>`;
     row.addEventListener('click', ()=> navigate('customer', {id:c.id}));
     wrap.appendChild(row);
   });
@@ -491,8 +565,10 @@ function renderTrash(){
   });
   $$('button[data-restore]', wrap).forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      DB.transactions[btn.dataset.restore].deleted = false;
+      const tx = DB.transactions[btn.dataset.restore];
+      tx.deleted = false;
       save();
+      broadcastSync({type:'tx_upsert', payload: tx});
       renderTrash();
       toast('تم استعادة العملية');
     });
@@ -517,7 +593,11 @@ function renderReminders(){
   });
   $$('button[data-open]', wrap).forEach(b=> b.addEventListener('click', ()=> navigate('customer',{id:b.dataset.open})));
   $$('button[data-clear]', wrap).forEach(b=> b.addEventListener('click', ()=>{
-    DB.customers[b.dataset.clear].reminderDate = null; save(); renderReminders();
+    const c = DB.customers[b.dataset.clear];
+    c.reminderDate = null;
+    save();
+    broadcastSync({type:'customer_upsert', payload: c});
+    renderReminders();
   }));
 }
 
@@ -526,6 +606,9 @@ function renderSettingsForm(){
   $('#setDark').checked = !!DB.settings.darkMode;
   $('#setQuick').checked = !!DB.settings.quickMode;
   $('#setContinuous').checked = !!DB.settings.continuous;
+  $('#setDialect').value = DB.settings.dialectLocale || 'ar-SA';
+  $('#setWakeWordEnabled').checked = !!DB.settings.wakeWordEnabled;
+  $('#setWakeWord').value = DB.settings.wakeWord || '';
   $('#setShopName').value = DB.settings.shopName || '';
   $('#setPin').value = '';
 }
@@ -538,6 +621,19 @@ $('#setDark').addEventListener('change', e=>{
 });
 $('#setQuick').addEventListener('change', e=>{ DB.settings.quickMode = e.target.checked; save(); });
 $('#setContinuous').addEventListener('change', e=>{ DB.settings.continuous = e.target.checked; save(); });
+$('#setDialect').addEventListener('change', e=>{
+  DB.settings.dialectLocale = e.target.value;
+  save();
+  toast('سيتم تطبيق اللهجة الجديدة بالتسجيل التالي');
+});
+$('#setWakeWordEnabled').addEventListener('change', e=>{
+  DB.settings.wakeWordEnabled = e.target.checked;
+  save();
+});
+$('#setWakeWord').addEventListener('input', e=>{
+  DB.settings.wakeWord = e.target.value.trim();
+  save();
+});
 $('#setShopName').addEventListener('input', e=>{ DB.settings.shopName = e.target.value; save(); });
 $('#setPin').addEventListener('change', e=>{ DB.settings.pin = e.target.value.trim(); save(); toast(DB.settings.pin ? 'تم تفعيل القفل' : 'تم إلغاء القفل'); });
 
@@ -563,6 +659,7 @@ $('#importBackupFile').addEventListener('change', e=>{
       const parsed = JSON.parse(reader.result);
       DB = Object.assign(defaultData(), parsed);
       save();
+      sendFullSync(); // ادفع البيانات المستعادة فوراً للجهاز المتصل إن وُجد
       toast('تم استعادة النسخة الاحتياطية بنجاح');
       navigate('home');
     }catch(err){
@@ -694,6 +791,7 @@ function startListeningSession(){
     return;
   }
   primeMicrophoneOnce();
+  recognition.lang = DB.settings.dialectLocale || 'ar-SA';
   try{
     recognition.start();
     $('#btnRecord').classList.add('listening');
@@ -727,7 +825,31 @@ function finalizeRecognitionIfAny(){
   if(!text) return;
   recognitionProcessed = true;
   try{ recognition.stop(); }catch(e){}
-  handleRecognizedText(text);
+
+  // فلترة الكلمة المفتاحية: أي كلام لا يحتوي عليها (دردشة جانبية، ضجيج...)
+  // يُتجاهل بصمت تماماً بدل ما يُسجَّل بالغلط كأمر مالي
+  const wake = DB.settings.wakeWordEnabled ? (DB.settings.wakeWord || '').trim() : '';
+  const filtered = window.DaftarParser.applyWakeWord(text, wake);
+
+  if(filtered === null){
+    // الكلمة المفتاحية غير موجودة إطلاقاً: كلام خلفية على الأغلب — نتجاهله
+    // بهدوء ونعيد الاستماع فوراً دون أي إشعار مزعج يقاطع البائع
+    recognitionActiveText = '';
+    recognitionProcessed = false;
+    $('#heardText').textContent = `بانتظار الكلمة المفتاحية «${wake}»...`;
+    startListeningSession();
+    return;
+  }
+  if(!filtered){
+    // قال الكلمة المفتاحية لوحدها بدون أمر بعدها بعد — نعطيه فرصة يكمل
+    recognitionActiveText = '';
+    recognitionProcessed = false;
+    $('#heardText').textContent = 'سمعتك! قل اسم الزبون والعملية والمبلغ الآن...';
+    startListeningSession();
+    return;
+  }
+
+  handleRecognizedText(filtered);
 }
 
 function openRecordModal(opts={}){
@@ -742,7 +864,9 @@ function openRecordModal(opts={}){
   $('#recordModal').hidden = false;
   $('#recordModal').style.display = 'flex';
   $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
-  $('#heardText').textContent = 'قل شيئاً مثل: «محمد إضافة خمسين ألف»';
+  $('#heardText').textContent = (DB.settings.wakeWordEnabled && DB.settings.wakeWord)
+    ? `قل «${DB.settings.wakeWord}» أولاً ثم أمرك، مثل: «${DB.settings.wakeWord} محمد إضافة خمسين ألف»`
+    : 'قل شيئاً مثل: «محمد إضافة خمسين ألف»';
   $('#parseResult').hidden = true;
   $('#ambiguousBox').hidden = true;
   $('#notFoundBox').hidden = true;
@@ -911,21 +1035,23 @@ let pendingNewCustomerParsed = null; // محفوظة لأغراض توافقية
 let activeParseCtx = null;
 function showParseResult(parsed, customer){
   activeParseCtx = {parsed, customer};
-  const prevBal = customerBalance(customer.id);
+  const currency = parsed.currency || DEFAULT_CURRENCY;
+  const symbol = CURRENCY_SYMBOLS[currency] || currency;
+  const prevBal = customerBalanceMap(customer.id)[currency] || 0;
   const newBal = parsed.type === 'add' ? prevBal + parsed.amount : prevBal - parsed.amount;
 
   $('#parseResult').hidden = false;
   $('#prName').textContent = customer.name;
   $('#prAction').textContent = parsed.type === 'add' ? 'إضافة دين' : 'طرح / دفعة';
-  $('#prAmount').textContent = fmt(parsed.amount) + ' ل.س';
+  $('#prAmount').textContent = fmt(parsed.amount) + ' ' + symbol;
   if(parsed.items && parsed.items.length){
     $('#prItemsRow').hidden = false;
-    $('#prItems').textContent = parsed.items.map(i=>`${i.name} (${fmt(i.amount)})`).join('، ');
+    $('#prItems').textContent = parsed.items.map(i=>`${i.name} (${fmt(i.amount)} ${symbol})`).join('، ');
   } else {
     $('#prItemsRow').hidden = true;
   }
-  $('#prPrev').textContent = fmt(prevBal);
-  $('#prNew').textContent = fmt(newBal);
+  $('#prPrev').textContent = fmt(prevBal) + ' ' + symbol;
+  $('#prNew').textContent = fmt(newBal) + ' ' + symbol;
   $('#prEditWrap').hidden = true;
 
   if(DB.settings.quickMode){
@@ -965,11 +1091,14 @@ function processMultipleCommands(commands, rawText){
       const newId = createCustomer({name: cmd.name || 'زبون جديد'});
       customer = DB.customers[newId];
     }
-    addTransaction(customer.id, cmd.type, cmd.amount, {voiceText: rawText, items: []});
+    // ملاحظة: الأوامر المتعددة بجملة واحدة تُسجَّل حالياً بالعملة الافتراضية
+    // (ليرة سورية) فقط؛ دعم عملة مختلفة لكل أمر ضمن نفس الجملة غير مطبّق بعد
+    addTransaction(customer.id, cmd.type, cmd.amount, {currency: DEFAULT_CURRENCY, voiceText: rawText, items: []});
     const newBal = customerBalance(customer.id);
     const sign = cmd.type === 'add' ? '+' : '−';
-    logQuick(customer.name, cmd.type, cmd.amount);
-    summary.push(`${customer.name} ${sign}${fmt(cmd.amount)}`);
+    const symbol = CURRENCY_SYMBOLS[DEFAULT_CURRENCY];
+    logQuick(customer.name, cmd.type, cmd.amount, symbol);
+    summary.push(`${customer.name} ${sign}${fmt(cmd.amount)} ${symbol}`);
   });
 
   toast(`✓ تم تسجيل ${commands.length} عمليات: ` + summary.join('، '), 4200);
@@ -978,7 +1107,9 @@ function processMultipleCommands(commands, rawText){
   if(App.currentView === 'home') renderHome();
 
   $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
-  $('#heardText').textContent = 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
+  $('#heardText').textContent = (DB.settings.wakeWordEnabled && DB.settings.wakeWord)
+    ? `جاهز للعملية التالية... قل «${DB.settings.wakeWord}» ثم الاسم والعملية والمبلغ`
+    : 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
   currentParsed = null;
   activeParseCtx = null;
   recognitionActiveText = '';
@@ -998,14 +1129,17 @@ function confirmParsedTransaction(){
       amount: parseInt(($('#editAmount').value||'0').replace(/[^\d]/g,''),10) || 0
     });
   }
+  const currency = parsed.currency || DEFAULT_CURRENCY;
   addTransaction(customer.id, parsed.type, parsed.amount, {
+    currency,
     items: parsed.items || [],
     voiceText: parsed.raw || null,
     note: (parsed.items && parsed.items.length) ? '' : ''
   });
 
-  const newBal = customerBalance(customer.id); // بعد الحفظ الآن (addTransaction تم فوق)
+  const newBal = customerBalanceMap(customer.id)[currency] || 0; // بعد الحفظ الآن، بعملة العملية نفسها
   const sign = parsed.type === 'add' ? '+' : '−';
+  const symbol = CURRENCY_SYMBOLS[currency] || currency;
 
   // تحديث أي شاشة خلفية مفتوحة فوراً (صفحة الزبون أو الرئيسية) حتى لو النافذة
   // الصوتية باقية مفتوحة فوق الشاشة
@@ -1015,12 +1149,14 @@ function confirmParsedTransaction(){
   // السلوك الافتراضي دائماً: نبقي النافذة مفتوحة ونعيد الاستماع تلقائياً للعملية
   // التالية، بدل إغلاقها بعد كل عملية — البائع يكمل تسجيل زبون بعد زبون
   // بصوته فقط دون أي ضغط زر إضافي، ويقفل النافذة يدوياً هو لما يخلص فعلاً.
-  logQuick(customer.name, parsed.type, parsed.amount);
-  toast(`✓ ${customer.name} ${sign}${fmt(parsed.amount)} — الرصيد الجديد: ${fmt(newBal)}`, 3000);
+  logQuick(customer.name, parsed.type, parsed.amount, symbol);
+  toast(`✓ ${customer.name} ${sign}${fmt(parsed.amount)} ${symbol} — الرصيد الجديد: ${fmt(newBal)} ${symbol}`, 3000);
 
   $('#parseResult').hidden = true;
   $('#recordStateLabel').textContent = '🔴 جاري الاستماع...';
-  $('#heardText').textContent = 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
+  $('#heardText').textContent = (DB.settings.wakeWordEnabled && DB.settings.wakeWord)
+    ? `جاهز للعملية التالية... قل «${DB.settings.wakeWord}» ثم الاسم والعملية والمبلغ`
+    : 'جاهز للعملية التالية... قل الاسم والعملية والمبلغ';
   currentParsed = null;
   activeParseCtx = null;
   recognitionActiveText = '';
@@ -1029,12 +1165,12 @@ function confirmParsedTransaction(){
   startListeningSession();
 }
 
-function logQuick(name, type, amount){
+function logQuick(name, type, amount, symbol){
   const log = $('#quickModeLog');
   log.hidden = false;
   const item = document.createElement('div');
   item.className = 'ql-item';
-  item.textContent = `✓ ${name} ${type==='add'?'+':'−'}${fmt(amount)}`;
+  item.textContent = `✓ ${name} ${type==='add'?'+':'−'}${fmt(amount)} ${symbol || CURRENCY_SYMBOLS[DEFAULT_CURRENCY]}`;
   log.prepend(item);
 }
 
@@ -1094,6 +1230,210 @@ if(themeToggleBtn){
     const setDarkCheckbox = document.getElementById('setDark');
     if(setDarkCheckbox) setDarkCheckbox.checked = newDark;
   });
+}
+
+/* =========================================================
+   المزامنة اللحظية بين جهازين (WebRTC عبر PeerJS)
+   ========================================================= */
+let syncPeer = null;
+let syncConn = null;
+let syncState = 'idle'; // idle | connecting | connected | error
+
+// هوية ثابتة لهذا الجهاز (لا علاقة لها بالبيانات المالية، فقط لتمييز مصدر الرسائل)
+function getDeviceId(){
+  let id = localStorage.getItem('daftar_device_id');
+  if(!id){
+    id = uid();
+    localStorage.setItem('daftar_device_id', id);
+  }
+  return id;
+}
+
+// يحوّل (اسم القناة + الرقم السري) لمعرّف واحد ثابت غير قابل للتخمين المباشر،
+// باستخدام SHA-256 المدمجة بالمتصفح (لا حاجة لأي مكتبة تشفير خارجية)
+async function computeChannelId(channel, pin){
+  const raw = 'daftar-sync-v1::' + channel.trim() + '::' + pin.trim();
+  const enc = new TextEncoder().encode(raw);
+  const hashBuf = await crypto.subtle.digest('SHA-256', enc);
+  const hex = Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  return 'daftar-' + hex.slice(0, 28); // صيغة صالحة لمعرّفات PeerJS (حروف/أرقام فقط)
+}
+
+function syncLog(msg){
+  const log = document.getElementById('syncLog');
+  if(!log) return;
+  const item = document.createElement('div');
+  item.className = 'ql-item';
+  item.textContent = msg;
+  log.prepend(item);
+}
+
+function setSyncStatus(state, text){
+  syncState = state;
+  const dot = document.getElementById('syncStatusIndicator');
+  const label = document.getElementById('syncStatusText');
+  const tileDot = document.getElementById('syncStatusDot');
+  if(dot) dot.className = 'sync-dot' + (state === 'connected' ? ' connected' : state === 'connecting' ? ' connecting' : '');
+  if(label) label.textContent = text;
+  if(tileDot) tileDot.hidden = state !== 'connected';
+}
+
+// يُرسِل كل الزبائن والعمليات الحالية للطرف الآخر عند أول اتصال، لتوحيد
+// أي تغييرات حصلت على كل جهاز أثناء انقطاعه عن الآخر
+function sendFullSync(){
+  if(!syncConn || !syncConn.open) return;
+  syncConn.send({type:'full_sync_response', payload:{customers: DB.customers, transactions: DB.transactions}});
+}
+
+function mergeFullSync(payload){
+  if(!payload) return;
+  Object.assign(DB.customers, payload.customers || {});
+  Object.assign(DB.transactions, payload.transactions || {});
+  save();
+  refreshVisibleScreens();
+  syncLog('✓ تم دمج بيانات الجهاز الآخر');
+}
+
+// يُستدعى بعد أي تعديل محلي (إضافة/تعديل/حذف) لبثّه فوراً للطرف المتصل
+function broadcastSync(msg){
+  if(syncConn && syncConn.open){
+    try{ syncConn.send(msg); }catch(e){}
+  }
+}
+
+function refreshVisibleScreens(){
+  if(App.currentView === 'customer') renderCustomerPage(App.activeCustomerId);
+  if(App.currentView === 'customers') renderCustomers();
+  if(App.currentView === 'home') renderHome();
+  if(App.currentView === 'stats') renderStats();
+}
+
+function handleSyncMessage(msg){
+  if(!msg || !msg.type) return;
+  if(msg.type === 'customer_upsert'){
+    if(!msg.payload || !msg.payload.id) return;
+    DB.customers[msg.payload.id] = msg.payload;
+    save();
+    refreshVisibleScreens();
+    syncLog('↓ تحديث زبون: ' + esc(msg.payload.name));
+  } else if(msg.type === 'tx_upsert'){
+    if(!msg.payload || !msg.payload.id) return;
+    DB.transactions[msg.payload.id] = msg.payload;
+    save();
+    refreshVisibleScreens();
+    syncLog('↓ تحديث عملية مالية');
+  } else if(msg.type === 'customer_hard_delete'){
+    const id = msg.payload && msg.payload.id;
+    if(!id) return;
+    delete DB.customers[id];
+    Object.keys(DB.transactions).forEach(txId=>{
+      if(DB.transactions[txId].customerId === id) delete DB.transactions[txId];
+    });
+    save();
+    refreshVisibleScreens();
+    syncLog('↓ حذف زبون من الجهاز الآخر');
+  } else if(msg.type === 'full_sync_request'){
+    sendFullSync();
+  } else if(msg.type === 'full_sync_response'){
+    mergeFullSync(msg.payload);
+  }
+}
+
+function wireDataConnection(conn){
+  syncConn = conn;
+  conn.on('open', ()=>{
+    setSyncStatus('connected', '✅ متصل — يزامن الآن لحظياً');
+    syncLog('🔗 تم الاتصال بالجهاز الآخر');
+    conn.send({type:'full_sync_request'});
+  });
+  conn.on('data', handleSyncMessage);
+  conn.on('close', ()=>{
+    setSyncStatus('idle', 'انقطع الاتصال بالجهاز الآخر');
+    syncLog('⚠️ انقطع الاتصال');
+    syncConn = null;
+  });
+  conn.on('error', ()=>{
+    setSyncStatus('error', 'حدث خطأ بالاتصال');
+  });
+}
+
+async function startSync(channel, pin){
+  if(typeof Peer === 'undefined'){
+    setSyncStatus('error', 'تعذّر تحميل مكتبة الاتصال (تأكد من الإنترنت وأعد المحاولة)');
+    return;
+  }
+  setSyncStatus('connecting', 'جاري الاتصال...');
+  const channelId = await computeChannelId(channel, pin);
+
+  // نحاول أولاً "امتلاك" معرّف القناة نفسه: أول جهاز يصل يصبح المضيف
+  // وينتظر اتصال الجهاز الثاني، والثاني يتصل به مباشرة تلقائياً
+  const hostPeer = new Peer(channelId);
+  let settled = false;
+
+  hostPeer.on('open', ()=>{
+    settled = true;
+    syncPeer = hostPeer;
+    syncLog('بانتظار اتصال الجهاز الثاني بنفس القناة...');
+    hostPeer.on('connection', conn => wireDataConnection(conn));
+  });
+
+  hostPeer.on('error', (err)=>{
+    if(settled) return;
+    if(err && err.type === 'unavailable-id'){
+      // جهاز آخر يملك هذا المعرّف أصلاً: نتصل به كطرف ثانٍ بدل استضافة قناة جديدة
+      settled = true;
+      try{ hostPeer.destroy(); }catch(e){}
+      const clientPeer = new Peer();
+      clientPeer.on('open', ()=>{
+        syncPeer = clientPeer;
+        const conn = clientPeer.connect(channelId, {reliable:true});
+        wireDataConnection(conn);
+      });
+      clientPeer.on('error', ()=>{
+        setSyncStatus('error', 'تعذّر الاتصال — تأكد من تطابق اسم القناة والرقم السري بالجهازين');
+      });
+    } else {
+      setSyncStatus('error', 'تعذّر الاتصال (' + (err && err.type || 'خطأ غير معروف') + ')');
+    }
+  });
+}
+
+function stopSync(){
+  try{ if(syncConn) syncConn.close(); }catch(e){}
+  try{ if(syncPeer) syncPeer.destroy(); }catch(e){}
+  syncConn = null;
+  syncPeer = null;
+  setSyncStatus('idle', 'غير متصل');
+}
+
+const formSyncConnect = document.getElementById('formSyncConnect');
+if(formSyncConnect){
+  formSyncConnect.addEventListener('submit', e=>{
+    e.preventDefault();
+    const channel = document.getElementById('syncChannelInput').value.trim();
+    const pin = document.getElementById('syncPinInput').value.trim();
+    if(!channel || pin.length < 4) return;
+    DB.settings.syncChannel = channel;
+    save();
+    document.getElementById('btnSyncConnect').disabled = true;
+    formSyncConnect.querySelectorAll('input').forEach(i=> i.disabled = true);
+    document.getElementById('btnSyncDisconnect').hidden = false;
+    startSync(channel, pin);
+  });
+}
+const btnSyncDisconnect = document.getElementById('btnSyncDisconnect');
+if(btnSyncDisconnect){
+  btnSyncDisconnect.addEventListener('click', ()=>{
+    stopSync();
+    document.getElementById('btnSyncConnect').disabled = false;
+    formSyncConnect.querySelectorAll('input').forEach(i=> i.disabled = false);
+    btnSyncDisconnect.hidden = true;
+  });
+}
+
+function renderSyncView(){
+  const channelInput = document.getElementById('syncChannelInput');
+  if(channelInput && DB.settings.syncChannel) channelInput.value = DB.settings.syncChannel;
 }
 
 /* ============ تهيئة أولية ============ */
