@@ -327,7 +327,11 @@
         </label>
         <label class="field-row">
           <span>قفل برقم سري (اختياري)</span>
-          <input type="password" id="setPin" placeholder="اتركه فارغاً لإلغاء القفل" inputmode="numeric" maxlength="6">
+          <input type="password" id="setPin" placeholder="اكتب رقماً جديداً لتفعيل/تغيير القفل" inputmode="numeric" maxlength="6">
+          <div class="pin-status" id="pinStatusRow">
+            <span id="pinStatusText">غير مفعّل حالياً</span>
+            <button type="button" id="btnRemovePin" hidden>إزالة القفل الآن</button>
+          </div>
         </label>
       </div>
       <p class="hint">كل البيانات تُحفظ محلياً على جهازك فقط ولا تحتاج إنترنت.</p>

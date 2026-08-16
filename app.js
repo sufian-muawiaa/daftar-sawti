@@ -611,6 +611,19 @@ function renderSettingsForm(){
   $('#setWakeWord').value = DB.settings.wakeWord || '';
   $('#setShopName').value = DB.settings.shopName || '';
   $('#setPin').value = '';
+  updatePinStatus();
+}
+
+// يعرض بوضوح هل القفل مفعّل فعلياً الآن أو لا — الخانة نفسها تُترك فاضية دائماً
+// (لإخفاء الرقم السري)، فلا يكفي النظر لها وحدها لمعرفة الحالة الحقيقية
+function updatePinStatus(){
+  const active = !!DB.settings.pin;
+  const row = $('#pinStatusRow');
+  const text = $('#pinStatusText');
+  const btn = $('#btnRemovePin');
+  row.classList.toggle('active', active);
+  text.textContent = active ? '🔒 القفل مفعّل حالياً' : 'غير مفعّل حالياً';
+  btn.hidden = !active;
 }
 $('#setDark').addEventListener('change', e=>{
   DB.settings.darkMode = e.target.checked;
@@ -635,7 +648,26 @@ $('#setWakeWord').addEventListener('input', e=>{
   save();
 });
 $('#setShopName').addEventListener('input', e=>{ DB.settings.shopName = e.target.value; save(); });
-$('#setPin').addEventListener('change', e=>{ DB.settings.pin = e.target.value.trim(); save(); toast(DB.settings.pin ? 'تم تفعيل القفل' : 'تم إلغاء القفل'); });
+
+// نستخدم حدث "input" (يطلق مع كل ضغطة زر) بدل "change" (يطلق فقط عند فقد
+// التركيز إن اختلفت القيمة عن بدايتها) — لأن الخانة تُعرض فاضية دائماً حتى
+// لو فيه قفل مفعّل، فلو المستخدم كتب رقماً ثم مسحه بالكامل راجعاً للفراغ،
+// "change" ما كان يطلق أبداً (القيمة النهائية = القيمة الابتدائية)، فيبقى
+// القفل القديم مفعّلاً بصمت رغم إنه يبدو أنه أُلغي. "input" يحل هذا تماماً.
+$('#setPin').addEventListener('input', e=>{
+  DB.settings.pin = e.target.value.trim();
+  save();
+  updatePinStatus();
+});
+// زر إزالة صريح وموثوق 100% بغض النظر عن حالة الخانة — أوضح للمستخدم من
+// مجرد "امسح الخانة" اللي سبّبت اللبس أصلاً
+$('#btnRemovePin').addEventListener('click', ()=>{
+  DB.settings.pin = '';
+  save();
+  $('#setPin').value = '';
+  updatePinStatus();
+  toast('✓ تم إلغاء القفل نهائياً');
+});
 
 /* ============ النسخ الاحتياطي ============ */
 $('#btnExportBackup').addEventListener('click', ()=>{
