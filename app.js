@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'', dialectLocale:'ar-SA', wakeWordEnabled:true, wakeWord:'دفتر', syncChannel:'' }
+    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'', dialectLocale:'ar-SA', wakeWordEnabled:false, wakeWord:'دفتر', syncChannel:'' }
   };
 }
 
