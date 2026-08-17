@@ -315,12 +315,18 @@
     let namePart = tokens.slice(0, action.index).join(' ').trim();
     let amountPart = tokens.slice(action.index+1).join(' ').trim();
 
-    // نمط "اطرح من محمد عشرة آلاف": الاسم يأتي بعد الفعل مباشرة مسبوقاً بـ"من"
+    // الفعل قبل الاسم: "اطرح من محمد عشرة آلاف" أو حتى "أضف محمد خمسين ألف"
+    // (بدون حرف جر). لو الاسم فاضي، أول كلمة بعد الفعل مباشرة ليست رقماً ولا
+    // اسم عملة تُعتبر اسم الزبون تلقائياً، بدل ما تنسحب بالغلط لخانة المبلغ
+    // وتتحول لاسم سلعة وهمي.
     if(!namePart){
       const afterTokens = tokens.slice(action.index+1);
       if(afterTokens[0] === 'من' && afterTokens[1]){
         namePart = afterTokens[1];
         amountPart = afterTokens.slice(2).join(' ').trim();
+      } else if(afterTokens[0] && !isNumberWordToken(afterTokens[0]) && CURRENCY_MAP[afterTokens[0]] === undefined){
+        namePart = afterTokens[0];
+        amountPart = afterTokens.slice(1).join(' ').trim();
       }
     }
 

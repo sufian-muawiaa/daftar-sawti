@@ -715,6 +715,7 @@ let pendingAmbiguous = null;
 let listenWatchdog = null;
 let silenceDebounce = null;      // مؤقت "انتهى الكلام" بعد فترة صمت كافية
 let recognitionActiveText = '';  // آخر نص متراكم أثناء الجلسة الحالية
+let chainedPrefix = '';          // نص محفوظ من جلسات سابقة متسلسلة (للموبايل تحديداً)
 let recognitionProcessed = false; // لمنع معالجة نفس النص مرتين
 let recognitionRunning = false;   // هل جلسة التعرف الصوتي شغّالة فعلياً الآن؟
 let pendingRestart = false;       // طلب إعادة استماع مؤجّل حتى تنتهي الجلسة الحالية فعلياً
@@ -756,8 +757,8 @@ function setupSpeechRecognition(){
     clearListenWatchdog();
     let text = '';
     for(let i=0; i<ev.results.length; i++) text += ev.results[i][0].transcript;
-    recognitionActiveText = text;
-    $('#heardText').textContent = '«' + text + '»';
+    recognitionActiveText = (chainedPrefix + ' ' + text).trim();
+    $('#heardText').textContent = '«' + recognitionActiveText + '»';
     // كل ما وصل كلام جديد (حتى لو غير نهائي بعد) نعيد ضبط مؤقت الصمت من الصفر —
     // لا نعالج النص إلا بعد فترة SILENCE_MS من الهدوء الفعلي، فيصير للبائع وقت
     // كافٍ يكمل جملته دون ما يُقطع تسجيله عند أول وقفة قصيرة
@@ -774,17 +775,10 @@ function setupSpeechRecognition(){
       showTypeFallback();
     } else if(ev.error === 'no-speech'){
       // شائع جداً على الموبايل: مهلة الصمت الداخلية للمتصفح أقصر بكثير من
-      // الحاسوب، فيُطلق هذا الخطأ بسرعة حتى لو المستخدم لسا ما بدأ الكلام
-      // (مثلاً وهو بانتظار قول الكلمة المفتاحية). طالما النافذة لسا مفتوحة
-      // نعيد المحاولة تلقائياً بصمت بدل التوقف والتحول لخانة الكتابة —
-      // وإلا كانت الكلمة المفتاحية تبدو "ما تستجيب إطلاقاً" على الموبايل
-      if(!$('#recordModal').hidden){
-        recognitionActiveText = '';
-        recognitionProcessed = false;
-        setTimeout(()=>{ if(!$('#recordModal').hidden) startListeningSession(); }, 300);
-      } else {
-        showTypeFallback();
-      }
+      // الحاسوب، فيُطلق هذا الخطأ بسرعة. لو ما وصلنا أي كلام بعد، نعيد
+      // المحاولة بصمت. لو وصلنا كلام جزئي سابق (chainedPrefix)، نحافظ عليه
+      // ونكمل — onend اللي بيتبع هالخطأ راح يتكفّل بإعادة التسلسل صح
+      if($('#recordModal').hidden) showTypeFallback();
     } else if(ev.error === 'aborted'){
       // إيقاف متعمّد من كودنا (مثلاً عند إعادة التشغيل)، ليس خطأ فعلياً — تجاهله بصمت
     } else {
@@ -797,15 +791,26 @@ function setupSpeechRecognition(){
     recognitionRunning = false;
     clearListenWatchdog();
     stopListeningVisual();
-    // شبكة أمان: لو انتهت الجلسة (مثلاً المتصفح أوقفها من نفسه) قبل ما يطلق
-    // مؤقت الصمت الخاص فينا، نعالج آخر نص وصلنا إن وُجد بدل ما يضيع الكلام بصمت
-    finalizeRecognitionIfAny();
-    // لو كان فيه طلب معلَّق لإعادة الاستماع (بعد حفظ عملية)، ننفّذه الآن بعد
+
+    // لو كان فيه طلب معلَّق لإعادة الاستماع (بعد حفظ عملية)، ننفّذه أولاً بعد
     // ما تأكدنا فعلياً إن الجلسة القديمة انتهت بالكامل — هذا يمنع خطأ التسابق
     // "recognition has already started" اللي كان يوقف الاستماع التلقائي بصمت
     if(pendingRestart){
       pendingRestart = false;
       startListeningSession();
+      return;
+    }
+
+    if(recognitionProcessed) return; // خلص المعالجة أصلاً (عبر مؤقت الصمت أو غيره)
+
+    // الجلسة انتهت من نفسها (شائع جداً على الموبايل) قبل ما يطلق مؤقت الصمت
+    // الخاص فينا — يعني على الأغلب توقف مبكر من المتصفح وليس نهاية كلام
+    // فعلية. بدل ما نعالج نصاً ناقصاً، نحتفظ به ونفتح جلسة جديدة فوراً
+    // تلقائياً تكمل تراكم نفس الجملة — البائع يحس إنها جلسة استماع واحدة
+    // متواصلة حتى لو تقنياً صارت عدة جلسات قصيرة متسلسلة بالخلفية
+    if(!$('#recordModal').hidden){
+      chainedPrefix = recognitionActiveText || '';
+      setTimeout(()=>{ if(!$('#recordModal').hidden) startListeningSession(); }, 150);
     }
   };
 }
@@ -872,6 +877,7 @@ function finalizeRecognitionIfAny(){
   const text = (recognitionActiveText || '').trim();
   if(!text) return;
   recognitionProcessed = true;
+  chainedPrefix = ''; // نظّف مخزن الجلسات المتسلسلة بعد المعالجة
   try{ recognition.stop(); }catch(e){}
 
   // فلترة الكلمة المفتاحية: أي كلام لا يحتوي عليها (دردشة جانبية، ضجيج...)
@@ -904,6 +910,7 @@ function openRecordModal(opts={}){
   currentParsed = null;
   pendingAmbiguous = null;
   recognitionActiveText = '';
+  chainedPrefix = '';
   recognitionProcessed = false;
   pendingRestart = false;
   clearSilenceDebounce();
@@ -1161,6 +1168,7 @@ function processMultipleCommands(commands, rawText){
   currentParsed = null;
   activeParseCtx = null;
   recognitionActiveText = '';
+  chainedPrefix = '';
   recognitionProcessed = false;
 
   startListeningSession();
@@ -1208,6 +1216,7 @@ function confirmParsedTransaction(){
   currentParsed = null;
   activeParseCtx = null;
   recognitionActiveText = '';
+  chainedPrefix = '';
   recognitionProcessed = false;
 
   startListeningSession();
