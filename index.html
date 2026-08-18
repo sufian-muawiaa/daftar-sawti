@@ -308,6 +308,14 @@
           <span>الكلمة المفتاحية نفسها</span>
           <input type="text" id="setWakeWord" placeholder="مثال: دفتر">
         </label>
+        <label class="switch-row">
+          <span>الكلمة الختامية (قولها لإنهاء الأمر فوراً بدل انتظار الصمت — مفيدة لو صار كلام جانبي مع الزبون)</span>
+          <input type="checkbox" id="setEndWordEnabled">
+        </label>
+        <label class="field-row">
+          <span>الكلمة الختامية نفسها</span>
+          <input type="text" id="setEndWord" placeholder="مثال: خلص">
+        </label>
         <label class="field-row">
           <span>لهجتك (يحسّن دقة التعرف الصوتي)</span>
           <select id="setDialect">
@@ -345,7 +353,10 @@
   <div class="modal-card">
     <div class="modal-head">
       <span id="recordStateLabel" aria-live="polite">🔴 جاري الاستماع...</span>
-      <button class="icon-btn ghost" id="btnCloseModal" aria-label="إغلاق">✕</button>
+      <div class="modal-head-actions">
+        <button class="icon-btn ghost" id="btnPauseResume" aria-label="إيقاف الاستماع مؤقتاً" title="إيقاف مؤقت (لو الزبون قاطعك بالكلام)">⏸️</button>
+        <button class="icon-btn ghost" id="btnCloseModal" aria-label="إغلاق">✕</button>
+      </div>
     </div>
 
     <div class="mic-visual" id="micVisual" aria-hidden="true">

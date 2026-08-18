@@ -152,26 +152,47 @@
     });
     const tokens = text.split(/\s+/).filter(Boolean);
 
-    const actionIdxs = [];
+    // نحدد كل مواقع كلمات العملية (إضافة/طرح) بالجملة كاملة
+    const actionAt = {}; // index -> 'add' | 'subtract'
     tokens.forEach((raw,i)=>{
       const t = raw.replace(/_/g,' ');
-      if(ADD_WORDS.includes(t)) actionIdxs.push({index:i, type:'add'});
-      else if(SUB_WORDS.includes(t)) actionIdxs.push({index:i, type:'subtract'});
+      if(ADD_WORDS.includes(t)) actionAt[i] = 'add';
+      else if(SUB_WORDS.includes(t)) actionAt[i] = 'subtract';
     });
-
+    const actionIdxs = Object.keys(actionAt).map(Number).sort((a,b)=>a-b);
     if(actionIdxs.length <= 1) return null; // أمر واحد أو لا شيء: نترك المعالجة لـ parseCommand
 
     const commands = [];
-    let nameStart = 0;
-    for(let k=0;k<actionIdxs.length;k++){
-      const {index, type} = actionIdxs[k];
-      const name = tokens.slice(nameStart, index).map(t=>t.replace(/_/g,' ')).join(' ').trim();
+    let cursor = 0; // مؤشر عام يتحرك للأمام مع كل أمر نُعالجه
 
-      // اجمع رموز المبلغ بعد كلمة العملية طالما هي أرقام (أو كلمة وصل "و")،
-      // وأول رمز مو رقم يعتبر بداية اسم الزبون التالي
-      let j = index + 1;
+    for(let k=0;k<actionIdxs.length;k++){
+      const actionIdx = actionIdxs[k];
+      const type = actionAt[actionIdx];
+
+      // نمط "الاسم قبل الفعل": كل ما بين المؤشر الحالي وموقع الفعل هو الاسم
+      let name = tokens.slice(cursor, actionIdx).map(t=>t.replace(/_/g,' ')).join(' ').trim();
+      let amtStart = actionIdx + 1;
+
+      if(!name){
+        // نمط "الفعل قبل الاسم" (بدون اسم قبله): اجمع الاسم من بعد الفعل
+        // مباشرة طالما مو أرقام/عملة ولا فعل تالٍ — يدعم أسماء عدة كلمات
+        let j = amtStart;
+        const nameTokens = [];
+        while(j < tokens.length && actionAt[j] === undefined){
+          const tj = tokens[j].replace(/_/g,' ');
+          if(isNumberWordToken(tj) || CURRENCY_MAP[tj] !== undefined) break;
+          nameTokens.push(tj);
+          j++;
+        }
+        name = nameTokens.join(' ').trim();
+        amtStart = j;
+      }
+
+      // اجمع رموز المبلغ بعد نهاية الاسم طالما هي أرقام (أو كلمة وصل "و")،
+      // ونتوقف فوراً عند الوصول لفعل تالٍ حتى لو بدا الرمز رقماً
+      let j = amtStart;
       const amountTokens = [];
-      while(j < tokens.length){
+      while(j < tokens.length && actionAt[j] === undefined){
         const tj = tokens[j].replace(/_/g,' ');
         const stripped = (tj.startsWith('و') && tj.length > 1) ? tj.slice(1) : tj;
         if(tj === 'و' || isNumberWordToken(tj) || isNumberWordToken(stripped)){
@@ -182,10 +203,18 @@
       const amountPhrase = amountTokens.map(t=>t.replace(/_/g,' ')).join(' ');
       const amount = wordsToNumber(amountPhrase) || 0;
 
-      if(name && amount > 0){
-        commands.push({name, type, amount, raw: rawText});
+      // تحقق من وجود اسم عملة مباشرة بعد الرقم (مثل "500 دولار") واستهلكه،
+      // وإلا بقي معلّقاً ويلتصق بالغلط باسم الأمر التالي بالجملة
+      let currency = DEFAULT_CURRENCY;
+      if(j < tokens.length && actionAt[j] === undefined){
+        const tj = tokens[j].replace(/_/g,' ');
+        if(CURRENCY_MAP[tj] !== undefined){ currency = CURRENCY_MAP[tj]; j++; }
       }
-      nameStart = j;
+
+      if(name && amount > 0){
+        commands.push({name, type, amount, currency, raw: rawText});
+      }
+      cursor = j;
     }
     return commands.length >= 2 ? commands : null;
   }
@@ -315,18 +344,24 @@
     let namePart = tokens.slice(0, action.index).join(' ').trim();
     let amountPart = tokens.slice(action.index+1).join(' ').trim();
 
-    // الفعل قبل الاسم: "اطرح من محمد عشرة آلاف" أو حتى "أضف محمد خمسين ألف"
-    // (بدون حرف جر). لو الاسم فاضي، أول كلمة بعد الفعل مباشرة ليست رقماً ولا
-    // اسم عملة تُعتبر اسم الزبون تلقائياً، بدل ما تنسحب بالغلط لخانة المبلغ
-    // وتتحول لاسم سلعة وهمي.
+    // الفعل قبل الاسم: "اطرح من محمد عشرة آلاف" أو "أضف عبد العزيز خمسين ألف"
+    // (بدون حرف جر). لو الاسم فاضي، نجمع كل الكلمات بعد الفعل مباشرة طالما
+    // مو أرقام ولا اسم عملة — يدعم هذا أسماء من عدة كلمات (كنية + اسم أب)
+    // بدل ما نكتفي بكلمة وحدة وتنقطع بقية الاسم لخانة المبلغ بالغلط.
     if(!namePart){
-      const afterTokens = tokens.slice(action.index+1);
-      if(afterTokens[0] === 'من' && afterTokens[1]){
-        namePart = afterTokens[1];
-        amountPart = afterTokens.slice(2).join(' ').trim();
-      } else if(afterTokens[0] && !isNumberWordToken(afterTokens[0]) && CURRENCY_MAP[afterTokens[0]] === undefined){
-        namePart = afterTokens[0];
-        amountPart = afterTokens.slice(1).join(' ').trim();
+      let after = tokens.slice(action.index+1);
+      if(after[0] === 'من') after = after.slice(1); // "من" اختيارية، نتجاوزها إن وُجدت
+      let j = 0;
+      const nameTokens = [];
+      while(j < after.length){
+        const tj = after[j];
+        if(isNumberWordToken(tj) || CURRENCY_MAP[tj] !== undefined) break;
+        nameTokens.push(tj);
+        j++;
+      }
+      if(nameTokens.length){
+        namePart = nameTokens.join(' ').trim();
+        amountPart = after.slice(j).join(' ').trim();
       }
     }
 
@@ -383,12 +418,28 @@
     return normText.slice(idx + wake.length).trim();
   }
 
+  // يبحث عن "الكلمة الختامية" (زي "خلص" أو "تم") داخل نص التسجيل — إن وُجدت
+  // نقصّها مع أي كلام بعدها (قد يكون كلاماً جانبياً بدأ بعد ما خلص البائع
+  // أمره فعلياً) ونُرجع النص السابق لها فقط كأمر جاهز للمعالجة فوراً، بدل
+  // انتظار مهلة الصمت كاملة.
+  // مثال: stripEndWord("محمد إضافة خمسين ألف خلص", "خلص") => {text:"محمد إضافة خمسين ألف", found:true}
+  function stripEndWord(rawText, endWord){
+    if(!endWord) return {text: rawText, found:false};
+    const end = normalizeArabic(endWord);
+    if(!end) return {text: rawText, found:false};
+    const normText = normalizeArabic(rawText);
+    const idx = normText.lastIndexOf(end);
+    if(idx === -1) return {text: normText, found:false};
+    return {text: normText.slice(0, idx).trim(), found:true};
+  }
+
   return {
     normalizeArabic,
     wordsToNumber,
     parseCommand,
     parseMultipleCommands,
     applyWakeWord,
+    stripEndWord,
     CURRENCY_SYMBOLS,
     DEFAULT_CURRENCY,
     // نصدّرها أيضاً لأغراض الاختبار المتقدم إن لزم لاحقاً

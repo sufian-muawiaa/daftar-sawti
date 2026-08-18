@@ -41,7 +41,7 @@ function defaultData(){
   return {
     customers: {},     // id -> {id,name,altNames[],father,nickname,phone,address,notes,openingBalance,createdAt,reminderDate,reminderNote}
     transactions: {},  // id -> {id,customerId,type:'add'|'subtract',amount,items[],note,voiceText,date,deleted}
-    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'', dialectLocale:'ar-SA', wakeWordEnabled:false, wakeWord:'دفتر', syncChannel:'' }
+    settings: { darkMode:false, themeSet:false, quickMode:true, continuous:false, shopName:'', pin:'', dialectLocale:'ar-SA', wakeWordEnabled:false, wakeWord:'دفتر', endWordEnabled:true, endWord:'خلص', syncChannel:'' }
   };
 }
 
@@ -609,6 +609,8 @@ function renderSettingsForm(){
   $('#setDialect').value = DB.settings.dialectLocale || 'ar-SA';
   $('#setWakeWordEnabled').checked = !!DB.settings.wakeWordEnabled;
   $('#setWakeWord').value = DB.settings.wakeWord || '';
+  $('#setEndWordEnabled').checked = !!DB.settings.endWordEnabled;
+  $('#setEndWord').value = DB.settings.endWord || '';
   $('#setShopName').value = DB.settings.shopName || '';
   $('#setPin').value = '';
   updatePinStatus();
@@ -645,6 +647,14 @@ $('#setWakeWordEnabled').addEventListener('change', e=>{
 });
 $('#setWakeWord').addEventListener('input', e=>{
   DB.settings.wakeWord = e.target.value.trim();
+  save();
+});
+$('#setEndWordEnabled').addEventListener('change', e=>{
+  DB.settings.endWordEnabled = e.target.checked;
+  save();
+});
+$('#setEndWord').addEventListener('input', e=>{
+  DB.settings.endWord = e.target.value.trim();
   save();
 });
 $('#setShopName').addEventListener('input', e=>{ DB.settings.shopName = e.target.value; save(); });
@@ -719,11 +729,12 @@ let chainedPrefix = '';          // نص محفوظ من جلسات سابقة �
 let recognitionProcessed = false; // لمنع معالجة نفس النص مرتين
 let recognitionRunning = false;   // هل جلسة التعرف الصوتي شغّالة فعلياً الآن؟
 let pendingRestart = false;       // طلب إعادة استماع مؤجّل حتى تنتهي الجلسة الحالية فعلياً
+let isManuallyPaused = false;     // هل ضغط البائع زر الإيقاف المؤقت يدوياً؟
 
 // المدة الزمنية (بالمللي ثانية) اللي لازم تمر فيها صمت بعد آخر كلمة قبل ما نعتبر
 // إن البائع خلّص كلامه. رقم أكبر = مهلة أطول ومجال أوسع للتوقف الطبيعي بين الكلمات
 // دون قطع التسجيل، لكن استجابة أبطأ شوي بعد انتهاء الكلام الفعلي.
-const SILENCE_MS = 1800;
+const SILENCE_MS = 3000;
 
 // التعرف الصوتي في المتصفح يعمل فقط ضمن "سياق آمن": HTTPS أو http://localhost.
 // فتح الملف مباشرة (file:///...) أو رابط http عادي على شبكة محلية يمنعه المتصفح بصمت.
@@ -759,6 +770,19 @@ function setupSpeechRecognition(){
     for(let i=0; i<ev.results.length; i++) text += ev.results[i][0].transcript;
     recognitionActiveText = (chainedPrefix + ' ' + text).trim();
     $('#heardText').textContent = '«' + recognitionActiveText + '»';
+
+    // الكلمة الختامية (زي "خلص"): لو قالها البائع، نعالج الأمر فوراً بدل
+    // انتظار مهلة الصمت كاملة — استجابة أسرع لمن يفضّل الوضوح على الانتظار
+    if(DB.settings.endWordEnabled && DB.settings.endWord){
+      const stripped = window.DaftarParser.stripEndWord(recognitionActiveText, DB.settings.endWord);
+      if(stripped.found){
+        recognitionActiveText = stripped.text;
+        clearSilenceDebounce();
+        finalizeRecognitionIfAny();
+        return;
+      }
+    }
+
     // كل ما وصل كلام جديد (حتى لو غير نهائي بعد) نعيد ضبط مؤقت الصمت من الصفر —
     // لا نعالج النص إلا بعد فترة SILENCE_MS من الهدوء الفعلي، فيصير للبائع وقت
     // كافٍ يكمل جملته دون ما يُقطع تسجيله عند أول وقفة قصيرة
@@ -913,6 +937,7 @@ function openRecordModal(opts={}){
   chainedPrefix = '';
   recognitionProcessed = false;
   pendingRestart = false;
+  isManuallyPaused = false;
   clearSilenceDebounce();
   App.recordOpts = opts;
   App.lastFocusedBeforeModal = document.activeElement;
@@ -928,6 +953,11 @@ function openRecordModal(opts={}){
   $('#quickModeLog').hidden = false;
   $('#quickModeLog').innerHTML = '';
   $('#typeFallback').hidden = true;
+  const pauseBtn = $('#btnPauseResume');
+  pauseBtn.textContent = '⏸️';
+  pauseBtn.classList.remove('paused');
+  pauseBtn.setAttribute('aria-label', 'إيقاف الاستماع مؤقتاً');
+  pauseBtn.title = 'إيقاف مؤقت (لو الزبون قاطعك بالكلام)';
   $('#btnCloseModal').focus();
 
   if(!isSecureContextForVoice()){
@@ -955,6 +985,7 @@ function closeRecordModal(){
   clearSilenceDebounce();
   recognitionProcessed = true; // يمنع أي معالجة متأخرة بعد الإغلاق
   pendingRestart = false; // يمنع إعادة فتح الاستماع تلقائياً بعد إغلاق صريح من المستخدم
+  isManuallyPaused = false;
   // إغلاق مضمون دائماً حتى لو كان هناك خطأ في كائن التعرف الصوتي
   try{ if(recognition) recognition.abort ? recognition.abort() : recognition.stop(); }catch(e){}
   stopListeningVisual();
@@ -986,6 +1017,39 @@ $('#btnTypeInstead').addEventListener('click', ()=>{
   if(recognitionSupported){ try{ recognition.stop(); }catch(e){} }
 });
 $('#btnCloseModal').addEventListener('click', closeRecordModal);
+
+$('#btnPauseResume').addEventListener('click', ()=>{
+  const btn = $('#btnPauseResume');
+  if(!isManuallyPaused){
+    // إيقاف مؤقت: نوقف الاستماع فوراً بدون معالجة أي كلام جزئي وصل (نتجاهله
+    // بالكامل — الافتراض إن الزبون قاطع البائع فمو ضروري نحاول نفهمه)
+    isManuallyPaused = true;
+    pendingRestart = false;
+    clearSilenceDebounce();
+    clearListenWatchdog();
+    recognitionProcessed = true; // يمنع أي معالجة متأخرة للنص الجزئي
+    recognitionActiveText = '';
+    chainedPrefix = '';
+    try{ recognition.stop(); }catch(e){}
+    stopListeningVisual();
+    btn.textContent = '▶️';
+    btn.classList.add('paused');
+    btn.setAttribute('aria-label', 'استئناف الاستماع');
+    btn.title = 'استئناف الاستماع';
+    $('#recordStateLabel').textContent = '⏸️ متوقف مؤقتاً';
+    $('#heardText').textContent = 'اضغط ▶️ لما تكون جاهز تكمل التسجيل';
+  } else {
+    // استئناف: نبدأ جلسة استماع جديدة نظيفة
+    isManuallyPaused = false;
+    btn.textContent = '⏸️';
+    btn.classList.remove('paused');
+    btn.setAttribute('aria-label', 'إيقاف الاستماع مؤقتاً');
+    btn.title = 'إيقاف مؤقت (لو الزبون قاطعك بالكلام)';
+    recognitionProcessed = false;
+    startListeningSession();
+  }
+});
+
 // إغلاق إضافي بالنقر على الخلفية المعتمة خارج البطاقة، وبمفتاح Escape — شبكة أمان مضاعفة
 $('#recordModal').addEventListener('click', (e)=>{ if(e.target.id === 'recordModal') closeRecordModal(); });
 document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && !$('#recordModal').hidden) closeRecordModal(); });
@@ -1146,12 +1210,11 @@ function processMultipleCommands(commands, rawText){
       const newId = createCustomer({name: cmd.name || 'زبون جديد'});
       customer = DB.customers[newId];
     }
-    // ملاحظة: الأوامر المتعددة بجملة واحدة تُسجَّل حالياً بالعملة الافتراضية
-    // (ليرة سورية) فقط؛ دعم عملة مختلفة لكل أمر ضمن نفس الجملة غير مطبّق بعد
-    addTransaction(customer.id, cmd.type, cmd.amount, {currency: DEFAULT_CURRENCY, voiceText: rawText, items: []});
-    const newBal = customerBalance(customer.id);
+    const currency = cmd.currency || DEFAULT_CURRENCY;
+    addTransaction(customer.id, cmd.type, cmd.amount, {currency, voiceText: rawText, items: []});
+    const newBal = customerBalanceMap(customer.id)[currency] || 0;
     const sign = cmd.type === 'add' ? '+' : '−';
-    const symbol = CURRENCY_SYMBOLS[DEFAULT_CURRENCY];
+    const symbol = CURRENCY_SYMBOLS[currency] || currency;
     logQuick(customer.name, cmd.type, cmd.amount, symbol);
     summary.push(`${customer.name} ${sign}${fmt(cmd.amount)} ${symbol}`);
   });

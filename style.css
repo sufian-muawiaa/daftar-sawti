@@ -315,6 +315,8 @@ a{color:inherit;}
 }
 @keyframes slideUp{from{transform:translateY(30px); opacity:0;} to{transform:translateY(0); opacity:1;}}
 .modal-head{display:flex; justify-content:space-between; align-items:center; font-weight:800; color:var(--ink); margin-bottom:14px;}
+.modal-head-actions{display:flex; gap:8px;}
+.icon-btn.paused{background:var(--brass); color:#fff; border-color:var(--brass);}
 
 .mic-visual{display:flex; justify-content:center; align-items:center; gap:6px; height:50px; margin-bottom:10px;}
 .mic-visual .wave{width:6px; height:16px; background:var(--rust); border-radius:4px; animation:wave 1s ease-in-out infinite;}
