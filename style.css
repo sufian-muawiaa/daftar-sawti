@@ -241,11 +241,11 @@ a{color:inherit;}
 /* ===== نماذج ===== */
 .form-grid{display:flex; flex-direction:column; gap:14px;}
 .form-grid label{display:flex; flex-direction:column; gap:6px; font-size:13.5px; font-weight:700; color:var(--ink-3);}
-.form-grid input, .form-grid textarea{
+.form-grid input, .form-grid textarea, .form-grid select{
   border:1.5px solid var(--thread); border-radius:var(--radius-s); padding:11px 12px;
   font-size:15px; background:var(--cream-card); color:var(--paper-text); outline:none;
 }
-.form-grid input:focus, .form-grid textarea:focus{border-color:var(--brass);}
+.form-grid input:focus, .form-grid textarea:focus, .form-grid select:focus{border-color:var(--brass);}
 .req{color:var(--rust); margin-right:2px;}
 .primary-btn{
   background:var(--ink); color:var(--brass-light); font-weight:800; font-size:15px;

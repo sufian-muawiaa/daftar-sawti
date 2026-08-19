@@ -345,23 +345,46 @@
     let amountPart = tokens.slice(action.index+1).join(' ').trim();
 
     // الفعل قبل الاسم: "اطرح من محمد عشرة آلاف" أو "أضف عبد العزيز خمسين ألف"
-    // (بدون حرف جر). لو الاسم فاضي، نجمع كل الكلمات بعد الفعل مباشرة طالما
-    // مو أرقام ولا اسم عملة — يدعم هذا أسماء من عدة كلمات (كنية + اسم أب)
-    // بدل ما نكتفي بكلمة وحدة وتنقطع بقية الاسم لخانة المبلغ بالغلط.
+    // أو "حط على علي خمسين ألف". لو الاسم فاضي، نجمع كل الكلمات بعد الفعل
+    // مباشرة طالما مو أرقام ولا اسم عملة — يدعم هذا أسماء من عدة كلمات.
+    //
+    // ملاحظة مهمة: حرف الجر "على" يتطابق حرفياً مع الاسم "علي" بعد التطبيع
+    // الداخلي (كلاهما يصبحان "علي")! فلو قال البائع "حط على علي" بيصير
+    // "علي علي" بالغلط لو اعتبرناها دايماً جزء من الاسم. نتعامل معها بحذر:
+    // نجرّب أولاً افتراض إنها حرف جر (مثل "من") ونحذفها؛ فقط لو أدى هذا
+    // لضياع الاسم بالكامل (يعني ما بقي إلا أرقام)، نتراجع ونعتبرها الاسم نفسه.
     if(!namePart){
-      let after = tokens.slice(action.index+1);
-      if(after[0] === 'من') after = after.slice(1); // "من" اختيارية، نتجاوزها إن وُجدت
-      let j = 0;
-      const nameTokens = [];
-      while(j < after.length){
-        const tj = after[j];
-        if(isNumberWordToken(tj) || CURRENCY_MAP[tj] !== undefined) break;
-        nameTokens.push(tj);
-        j++;
-      }
-      if(nameTokens.length){
-        namePart = nameTokens.join(' ').trim();
-        amountPart = after.slice(j).join(' ').trim();
+      const after = tokens.slice(action.index+1);
+      const collectName = (arr)=>{
+        let j = 0; const nameTokens = [];
+        while(j < arr.length){
+          const tj = arr[j];
+          if(isNumberWordToken(tj) || CURRENCY_MAP[tj] !== undefined) break;
+          nameTokens.push(tj);
+          j++;
+        }
+        return {name: nameTokens.join(' ').trim(), rest: arr.slice(j)};
+      };
+
+      const PREPOSITIONS = ['من', 'علي']; // 'علي' هنا تمثل أيضاً "على" بعد التطبيع
+      if(PREPOSITIONS.includes(after[0])){
+        const withoutPrep = collectName(after.slice(1));
+        if(withoutPrep.name){
+          namePart = withoutPrep.name;
+          amountPart = withoutPrep.rest.join(' ').trim();
+        } else {
+          // التراجع: حذف حرف الجر المفترض ترك الاسم فارغاً، يعني الأرجح إنها
+          // كانت الاسم نفسه ("علي" كاسم) وليست حرف جر — نعيدها للاسم
+          const withPrep = collectName(after);
+          namePart = withPrep.name;
+          amountPart = withPrep.rest.join(' ').trim();
+        }
+      } else {
+        const r = collectName(after);
+        if(r.name){
+          namePart = r.name;
+          amountPart = r.rest.join(' ').trim();
+        }
       }
     }
 

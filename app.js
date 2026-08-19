@@ -355,16 +355,37 @@ $('#btnQuickAdd').addEventListener('click', ()=> manualTransaction('add'));
 $('#btnQuickPay').addEventListener('click', ()=> manualTransaction('subtract'));
 $('#btnCustVoice').addEventListener('click', ()=> openRecordModal({presetCustomerId: App.activeCustomerId}));
 
+let manualTxType = 'add';
 function manualTransaction(type){
-  const label = type === 'add' ? 'مبلغ الإضافة' : 'مبلغ الدفعة';
-  const str = prompt(label + ' (بالأرقام):');
-  if(!str) return;
-  const val = parseInt(str.replace(/[^\d]/g,''),10);
-  if(isNaN(val) || val<=0) return toast('رقم غير صالح');
-  addTransaction(App.activeCustomerId, type, val, {note:'إدخال يدوي'});
-  renderCustomerPage(App.activeCustomerId);
-  toast('تم الحفظ ✓');
+  manualTxType = type;
+  $('#manualTxTitle').textContent = type === 'add' ? 'إضافة دين' : 'تسجيل دفعة';
+  $('#manualTxAmount').value = '';
+  $('#manualTxCurrency').value = DEFAULT_CURRENCY;
+  $('#manualTxNote').value = '';
+  $('#manualTxModal').hidden = false;
+  $('#manualTxModal').style.display = 'flex';
+  setTimeout(()=> $('#manualTxAmount').focus(), 50);
 }
+
+function closeManualTxModal(){
+  $('#manualTxModal').hidden = true;
+  $('#manualTxModal').style.display = 'none';
+}
+$('#btnCloseManualTx').addEventListener('click', closeManualTxModal);
+$('#manualTxModal').addEventListener('click', (e)=>{ if(e.target.id === 'manualTxModal') closeManualTxModal(); });
+
+$('#formManualTx').addEventListener('submit', e=>{
+  e.preventDefault();
+  const val = parseInt(($('#manualTxAmount').value||'').replace(/[^\d]/g,''),10);
+  if(isNaN(val) || val<=0){ toast('أدخل مبلغاً صحيحاً'); return; }
+  const currency = $('#manualTxCurrency').value; // اختيار صريح إلزامي، لا افتراض صامت أبداً
+  const note = $('#manualTxNote').value.trim();
+  addTransaction(App.activeCustomerId, manualTxType, val, {currency, note: note || 'إدخال يدوي'});
+  const symbol = CURRENCY_SYMBOLS[currency] || currency;
+  closeManualTxModal();
+  renderCustomerPage(App.activeCustomerId);
+  toast(`✓ تم الحفظ: ${fmt(val)} ${symbol}`);
+});
 
 $('#btnCustNote').addEventListener('click', ()=>{
   const note = prompt('اكتب الملاحظة (أو استخدم لوحة المفاتيح الصوتية في جهازك):');

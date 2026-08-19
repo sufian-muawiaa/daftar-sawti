@@ -415,6 +415,34 @@
   </div>
 </div>
 
+<!-- ===== نافذة الإدخال اليدوي (إضافة دين / تسجيل دفعة) ===== -->
+<div class="modal-overlay" id="manualTxModal" hidden role="dialog" aria-modal="true" aria-labelledby="manualTxTitle">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="manualTxTitle">إضافة دين</span>
+      <button class="icon-btn ghost" id="btnCloseManualTx" aria-label="إغلاق">✕</button>
+    </div>
+    <form id="formManualTx" class="form-grid">
+      <label>المبلغ<span class="req">*</span>
+        <input type="text" inputmode="numeric" id="manualTxAmount" placeholder="مثال: 500000" required autofocus>
+      </label>
+      <label>العملة
+        <select id="manualTxCurrency">
+          <option value="SYP">ليرة سورية (ل.س)</option>
+          <option value="USD">دولار أمريكي ($)</option>
+          <option value="EUR">يورو (€)</option>
+          <option value="SAR">ريال سعودي (ر.س)</option>
+          <option value="AED">درهم إماراتي (د.إ)</option>
+        </select>
+      </label>
+      <label>ملاحظة (اختياري)
+        <input type="text" id="manualTxNote" placeholder="مثال: دفعة أولى">
+      </label>
+      <button type="submit" class="primary-btn" id="btnManualTxSave">💾 حفظ</button>
+    </form>
+  </div>
+</div>
+
 <!-- ===== توست صغير ===== -->
 <div class="toast" id="toast" hidden></div>
 
