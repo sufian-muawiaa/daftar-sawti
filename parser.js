@@ -137,6 +137,8 @@
     if(TENS[tok] !== undefined) return true;
     if(ONES[tok] !== undefined) return true;
     if(SCALE[tok] !== undefined) return true;
+    // حرف الواو يُكتب غالباً ملتصقاً بالكلمة التالية بلا مسافة (وعشرون، وخمسمئة...)
+    if(tok.startsWith('و') && tok.length > 1) return isNumberWordToken(tok.slice(1));
     return false;
   }
 
@@ -334,10 +336,26 @@
     // أمر فتح صفحة بدون عملية مالية: "افتح صفحة محمد" أو "صفحة محمد"
     const action = findActionWord(tokens);
     if(!action){
-      let name = cleaned;
-      OPEN_WORDS.forEach(w=>{ name = name.replace(new RegExp('^'+w+'\\s*','g'),''); });
-      name = name.trim();
-      if(name) return {kind:'open', name};
+      let nameRaw = cleaned;
+      OPEN_WORDS.forEach(w=>{ nameRaw = nameRaw.replace(new RegExp('^'+w+'\\s*','g'),''); });
+      nameRaw = nameRaw.trim();
+
+      // فصل صارم: أي رقم أو اسم عملة يُستبعد تمامًا من الاسم مهما كان موقعه،
+      // بدل ما ينسحب بالغلط لداخل اسم الزبون (مثال: "علي 25000" لا يجوز أن
+      // يصبح اسم الزبون الحرفي "علي 25000"، والرقم بلا أي معنى فيه أصلاً
+      // بدون كلمة عملية مثل "إضافة" تُفسّره). نُبلّغ عن أي رقم مُتجاهَل حتى
+      // تنعكس الملاحظة بالواجهة ولا يضيع شيء بصمت.
+      const rawTokens = nameRaw.split(/\s+/).filter(Boolean);
+      const nameTokens = [];
+      const ignoredTokens = [];
+      rawTokens.forEach(t=>{
+        if(isNumberWordToken(t) || CURRENCY_MAP[t] !== undefined) ignoredTokens.push(t);
+        else nameTokens.push(t);
+      });
+      const name = nameTokens.join(' ').trim();
+      const ignoredNumber = ignoredTokens.join(' ').trim();
+
+      if(name) return {kind:'open', name, ignoredNumber: ignoredNumber || null};
       return {kind:'unknown', raw: rawText};
     }
 

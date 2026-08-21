@@ -220,6 +220,7 @@ a{color:inherit;}
 .pill-btn.add{background:var(--rust); color:#fff;}
 .pill-btn.pay{background:#2F6E4E; color:#fff;}
 .pill-btn.voice{background:var(--brass); color:#fff;}
+.pill-btn.wide{flex:1 1 100%; padding:16px 8px; font-size:16px; box-shadow:0 4px 10px var(--shadow);}
 .pill-btn.ghost{background:var(--cream-card); color:var(--ink);}
 .pill-btn.confirm{background:var(--ink); color:var(--brass-light); flex:1;}
 .action-row.secondary{gap:10px; margin:10px 0 6px;}

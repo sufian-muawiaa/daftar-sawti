@@ -1109,11 +1109,22 @@ function handleRecognizedText(text){
 
   if(parsed.kind === 'open'){
     const matches = findCustomersByName(parsed.name);
-    if(matches.length === 1){ closeRecordModal(); navigate('customer', {id:matches[0].id}); return; }
+    // لو التطبيق تجاهل رقماً مذكوراً بلا كلمة عملية توضح معناه (زي "علي 25000"
+    // بدون "إضافة" أو "طرح")، ننبّه البائع صراحة بدل ما يضيع الرقم بصمت —
+    // حماية للبيانات المالية من أي فهم خاطئ غير واضح
+    const numberWarning = parsed.ignoredNumber
+      ? ` (⚠️ تجاهلت رقماً غير واضح المعنى: "${parsed.ignoredNumber}" — لو تقصد تسجيل دين، استخدم كلمة "إضافة" أو "طرح")`
+      : '';
+    if(matches.length === 1){
+      closeRecordModal();
+      navigate('customer', {id:matches[0].id});
+      if(numberWarning) toast(numberWarning, 5000);
+      return;
+    }
     if(matches.length > 1){ showAmbiguous(matches, ()=>{}); return; }
     // زبون جديد تمامًا: أنشئ له صفحة تلقائيًا دون سؤال
     const newId = createCustomer({name: (parsed.name||'').trim() || 'زبون جديد'});
-    toast('✓ تم إنشاء صفحة جديدة: ' + DB.customers[newId].name);
+    toast('✓ تم إنشاء صفحة جديدة: ' + DB.customers[newId].name + numberWarning, numberWarning ? 5000 : 2200);
     closeRecordModal();
     navigate('customer', {id:newId});
     return;
